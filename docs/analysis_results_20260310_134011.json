@@ -1,0 +1,34 @@
+[
+  {
+    "type": "yaml",
+    "path": "../jaffle-shop-classic/dbt_project.yml"
+  },
+  {
+    "type": "sql",
+    "path": "../jaffle-shop-classic/models/orders.sql"
+  },
+  {
+    "type": "sql",
+    "path": "../jaffle-shop-classic/models/customers.sql"
+  },
+  {
+    "type": "yaml",
+    "path": "../jaffle-shop-classic/models/schema.yml"
+  },
+  {
+    "type": "sql",
+    "path": "../jaffle-shop-classic/models/staging/stg_customers.sql"
+  },
+  {
+    "type": "yaml",
+    "path": "../jaffle-shop-classic/models/staging/schema.yml"
+  },
+  {
+    "type": "sql",
+    "path": "../jaffle-shop-classic/models/staging/stg_payments.sql"
+  },
+  {
+    "type": "sql",
+    "path": "../jaffle-shop-classic/models/staging/stg_orders.sql"
+  }
+]
