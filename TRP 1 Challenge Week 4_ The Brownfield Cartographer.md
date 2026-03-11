@@ -77,15 +77,7 @@ Based on patterns from forward-deployed engineering engagements, these are the q
 
 The Cartographer is a multi-agent system with four specialized analysis agents, a knowledge graph as its central data store, and a query interface that allows both natural language and structured interrogation of the codebase.
 
-## **Agent 1: The Surveyor (Static Structure Analyst)**
 
-Performs deep static analysis of the codebase using tree-sitter for language-agnostic AST parsing. Builds the structural skeleton of the system. What it extracts per file:
-
-* Module graph: which files import which (cross-language: Python imports \+ relative path resolution)  
-* Public API surface: all exported/public functions and classes with their signatures  
-* Complexity signals: cyclomatic complexity, lines of code, comment ratio  
-* Change velocity: git log \--follow analysis to identify which files change most frequently  
-* Dead code candidates: exported symbols with no internal or external import references
 
 ##  **Agent 2: The Hydrologist (Data Flow & Lineage Analyst)**
 
