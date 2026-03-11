@@ -1,0 +1,104 @@
+{
+  "imports": {
+    "../jaffle-shop-classic/dbt_project.yml": [],
+    "../jaffle-shop-classic/models/orders.sql": [
+      "payments",
+      "final",
+      "stg_orders",
+      "order_payments",
+      "orders",
+      "stg_payments"
+    ],
+    "../jaffle-shop-classic/models/customers.sql": [
+      "customer_payments",
+      "payments",
+      "customers",
+      "final",
+      "customer_orders",
+      "stg_orders",
+      "stg_customers",
+      "orders",
+      "stg_payments"
+    ],
+    "../jaffle-shop-classic/models/schema.yml": [
+      "ref:customers"
+    ],
+    "../jaffle-shop-classic/models/staging/stg_customers.sql": [
+      "the",
+      "renamed",
+      "source",
+      "raw_customers"
+    ],
+    "../jaffle-shop-classic/models/staging/schema.yml": [],
+    "../jaffle-shop-classic/models/staging/stg_payments.sql": [
+      "raw_payments",
+      "the",
+      "renamed",
+      "source"
+    ],
+    "../jaffle-shop-classic/models/staging/stg_orders.sql": [
+      "raw_orders",
+      "the",
+      "renamed",
+      "source"
+    ]
+  },
+  "file_types": {
+    "../jaffle-shop-classic/dbt_project.yml": "yaml",
+    "../jaffle-shop-classic/models/orders.sql": "sql",
+    "../jaffle-shop-classic/models/customers.sql": "sql",
+    "../jaffle-shop-classic/models/schema.yml": "yaml",
+    "../jaffle-shop-classic/models/staging/stg_customers.sql": "sql",
+    "../jaffle-shop-classic/models/staging/schema.yml": "yaml",
+    "../jaffle-shop-classic/models/staging/stg_payments.sql": "sql",
+    "../jaffle-shop-classic/models/staging/stg_orders.sql": "sql"
+  },
+  "git_velocity": {
+    "../jaffle-shop-classic/dbt_project.yml": 0,
+    "../jaffle-shop-classic/models/orders.sql": 0,
+    "../jaffle-shop-classic/models/customers.sql": 0,
+    "../jaffle-shop-classic/models/schema.yml": 0,
+    "../jaffle-shop-classic/models/staging/stg_customers.sql": 0,
+    "../jaffle-shop-classic/models/staging/schema.yml": 0,
+    "../jaffle-shop-classic/models/staging/stg_payments.sql": 0,
+    "../jaffle-shop-classic/models/staging/stg_orders.sql": 0
+  },
+  "module_graph": {
+    "nodes": [
+      "../jaffle-shop-classic/dbt_project.yml",
+      "../jaffle-shop-classic/models/orders.sql",
+      "../jaffle-shop-classic/models/staging/stg_orders.sql",
+      "../jaffle-shop-classic/models/staging/stg_payments.sql",
+      "../jaffle-shop-classic/models/customers.sql",
+      "../jaffle-shop-classic/models/staging/stg_customers.sql",
+      "../jaffle-shop-classic/models/schema.yml",
+      "../jaffle-shop-classic/models/staging/schema.yml"
+    ],
+    "edges": [
+      [
+        "../jaffle-shop-classic/models/orders.sql",
+        "../jaffle-shop-classic/models/staging/stg_orders.sql"
+      ],
+      [
+        "../jaffle-shop-classic/models/orders.sql",
+        "../jaffle-shop-classic/models/staging/stg_payments.sql"
+      ],
+      [
+        "../jaffle-shop-classic/models/customers.sql",
+        "../jaffle-shop-classic/models/staging/stg_orders.sql"
+      ],
+      [
+        "../jaffle-shop-classic/models/customers.sql",
+        "../jaffle-shop-classic/models/staging/stg_customers.sql"
+      ],
+      [
+        "../jaffle-shop-classic/models/customers.sql",
+        "../jaffle-shop-classic/models/orders.sql"
+      ],
+      [
+        "../jaffle-shop-classic/models/customers.sql",
+        "../jaffle-shop-classic/models/staging/stg_payments.sql"
+      ]
+    ]
+  }
+}
