@@ -2,22 +2,26 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict
+from datetime import datetime
+
 class ModuleNode(BaseModel):
-    """Represents a source file/module."""
     path: str
-    language: str  # 'python', 'sql', 'yaml', etc.
+    language: str
     purpose_statement: Optional[str] = None
     domain_cluster: Optional[str] = None
     complexity_score: Optional[float] = None
-    change_velocity_30d: Optional[int] = None  # number of commits in last 30 days
+    change_velocity_30d: Optional[int] = 0          # commits in last 30 days
     is_dead_code_candidate: bool = False
     last_modified: Optional[datetime] = None
-
-    # Additional fields from Surveyor
     imports: List[str] = Field(default_factory=list)
     public_functions: List[str] = Field(default_factory=list)
     classes: List[str] = Field(default_factory=list)
     class_inheritance: Dict[str, List[str]] = Field(default_factory=dict)
+    # Graph analytics fields
+    pagerank: float = 0.0
+    scc_id: Optional[int] = None                    # ID of the strongly connected component
 
 class DatasetNode(BaseModel):
     """Represents a data set (table, file, stream)."""

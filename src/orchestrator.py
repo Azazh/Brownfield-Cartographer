@@ -7,15 +7,14 @@ import json
 import datetime
 
 def run_analysis(repo_path):
-    # Phase 1 & 2: Surveyor and Hydrologist share a single knowledge graph
     kg = KnowledgeGraph()
 
     # Phase 1: Surveyor
-    surveyor = DynamicSurveyor(kg)          # pass the shared graph
-    surveyor.analyze_repo(repo_path)
+    surveyor = DynamicSurveyor(kg)
+    report = surveyor.analyze_repo(repo_path)   # now returns a report
 
     # Phase 2: Hydrologist
-    hydrologist = HydrologistAgent(kg)      # pass the same graph
+    hydrologist = HydrologistAgent(kg)
     hydrologist.analyze_repo(repo_path)
 
     # Save unified knowledge graph
@@ -27,4 +26,10 @@ def run_analysis(repo_path):
     with open(kg_path, 'w', encoding='utf-8') as f:
         json.dump(kg.to_json_serializable(), f, indent=2)
 
+    # Save surveyor report
+    report_path = os.path.join(output_dir, f'surveyor_report_{timestamp}.json')
+    with open(report_path, 'w', encoding='utf-8') as f:
+        json.dump(report, f, indent=2)
+
     print(f"Knowledge graph saved to {kg_path}")
+    print(f"Surveyor report saved to {report_path}")
