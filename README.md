@@ -118,8 +118,5 @@ head -n 30 .cartography/lineage_graph.json
 
 ## License
 
-MIT (or your chosen license)
+MIT 
 
----
-
-For questions or issues, please open an issue on GitHub or contact the author.
