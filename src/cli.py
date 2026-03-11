@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-Entry point for The Brownfield Cartographer.
-Supports local paths and GitHub URLs (automatically cloned).
-"""
-
 import argparse
 import os
 import sys
@@ -16,7 +11,6 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 def clone_repo(git_url):
-    """Clone a git repository into a temporary directory and return the path."""
     temp_dir = tempfile.mkdtemp(prefix="brownfield_")
     logger.info(f"Cloning {git_url} into {temp_dir} ...")
     try:
@@ -30,29 +24,29 @@ def clone_repo(git_url):
 def main():
     parser = argparse.ArgumentParser(description="The Brownfield Cartographer")
     parser.add_argument('--repo', type=str, required=True,
-                        help='Path to local repository or GitHub URL (https://... or git@...)')
+                        help='Path to local repository or GitHub URL')
     parser.add_argument('--output', type=str, default='.cartography',
                         help='Output directory for artifacts (default: .cartography)')
+    parser.add_argument('--sql-dialect', type=str, default='duckdb',
+                        help='SQL dialect for parsing (e.g., duckdb, postgres, bigquery, snowflake). Default: duckdb')
     args = parser.parse_args()
 
     repo_path = args.repo
     output_dir = args.output
+    sql_dialect = args.sql_dialect
 
     # If the repo argument looks like a URL, clone it first
     if repo_path.startswith(('http://', 'https://', 'git@')):
         logger.info("Detected remote repository URL – cloning...")
         repo_path = clone_repo(repo_path)
-        # We'll keep the cloned repo; it will be deleted after analysis (optional)
-        # For now, we leave it; you can add cleanup later.
 
-    # Run the analysis
     try:
-        run_analysis(repo_path, output_dir)
+        run_analysis(repo_path, output_dir, sql_dialect=sql_dialect)
     except Exception as e:
         logger.exception("Fatal error during analysis")
         sys.exit(1)
     finally:
-        # Optional: clean up cloned temporary directory
+        # Optional cleanup of temporary clone
         if 'temp_dir' in locals() and os.path.exists(temp_dir):
             import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)

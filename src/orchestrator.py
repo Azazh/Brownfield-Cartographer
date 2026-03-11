@@ -1,8 +1,3 @@
-"""
-Orchestrator – runs Surveyor and Hydrologist sequentially,
-saves artifacts, and provides progress logging.
-"""
-
 import os
 import json
 import datetime
@@ -13,16 +8,15 @@ from src.graph.knowledge_graph import KnowledgeGraph
 
 logger = logging.getLogger(__name__)
 
-def run_analysis(repo_path: str, output_dir: str = '.cartography'):
+def run_analysis(repo_path: str, output_dir: str = '.cartography', sql_dialect: str = 'duckdb'):
     """
     Run the full analysis pipeline.
-    - repo_path: local path to the repository (already cloned if needed)
+    - repo_path: local path to the repository
     - output_dir: directory where artifacts will be saved
+    - sql_dialect: SQL dialect to use in lineage extraction
     """
-    # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
 
-    # Shared knowledge graph
     kg = KnowledgeGraph()
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
@@ -31,9 +25,8 @@ def run_analysis(repo_path: str, output_dir: str = '.cartography'):
     logger.info("Phase 1: Surveyor – static structure analysis")
     logger.info("=" * 50)
     surveyor = DynamicSurveyor(kg)
-    report = surveyor.analyze_repo(repo_path)   # returns surveyor report
+    report = surveyor.analyze_repo(repo_path)
 
-    # Save surveyor report
     report_path = os.path.join(output_dir, f'surveyor_report_{timestamp}.json')
     with open(report_path, 'w', encoding='utf-8') as f:
         json.dump(report, f, indent=2)
@@ -43,10 +36,9 @@ def run_analysis(repo_path: str, output_dir: str = '.cartography'):
     logger.info("=" * 50)
     logger.info("Phase 2: Hydrologist – data lineage analysis")
     logger.info("=" * 50)
-    hydrologist = HydrologistAgent(kg)
+    hydrologist = HydrologistAgent(kg, sql_dialect=sql_dialect)
     hydrologist.analyze_repo(repo_path)
 
-    # Save unified knowledge graph
     kg_path = os.path.join(output_dir, f'knowledge_graph_{timestamp}.json')
     with open(kg_path, 'w', encoding='utf-8') as f:
         json.dump(kg.to_json_serializable(), f, indent=2)

@@ -164,10 +164,10 @@ class PythonDataFlowAnalyzer:
 # HydrologistAgent – main agent that uses all analyzers and builds the KG
 # ----------------------------------------------------------------------
 class HydrologistAgent:
-    def __init__(self, knowledge_graph: KnowledgeGraph):
+    def __init__(self, knowledge_graph: KnowledgeGraph, sql_dialect: str = 'duckdb'):
         self.kg = knowledge_graph
+        self.sql_analyzer = SQLAnalyzer(dialect=sql_dialect)
         self.py_analyzer = PythonDataFlowAnalyzer()
-        self.sql_analyzer = SQLAnalyzer(dialect='duckdb')
         self.yaml_analyzer = YAMLAnalyzer()
 
     def analyze_repo(self, repo_path):
@@ -233,48 +233,53 @@ class HydrologistAgent:
         if not result or result.get('error'):
             return
 
-        tables = result.get('tables', [])
-        target = os.path.splitext(os.path.basename(file_path))[0]
-        sources = tables
+        read_tables = result.get('read_tables', [])
+        write_tables = result.get('write_tables', [])
+        operations = result.get('operations', [])
 
-        # Create target dataset node
-        target_node = DatasetNode(name=target, storage_type='table')
-        self.kg.add_node(target_node)
+        # If no explicit write tables, assume the file name is the target (common in dbt)
+        if not write_tables:
+            target = os.path.splitext(os.path.basename(file_path))[0]
+            write_tables = [target]
 
-        # Create source dataset nodes
-        for src in sources:
-            src_node = DatasetNode(name=src, storage_type='table')
-            self.kg.add_node(src_node)
+        # Create dataset nodes and edges
+        for target in write_tables:
+            target_node = DatasetNode(name=target, storage_type='table')
+            self.kg.add_node(target_node)
 
-        # Create a transformation node for this SQL file
-        trans_node = TransformationNode(
-            source_datasets=sources,
-            target_datasets=[target],
-            transformation_type='sql',
-            source_file=file_path,
-            line_range=None   # could be extracted later
-        )
-        self.kg.add_node(trans_node)
+            for src in read_tables:
+                src_node = DatasetNode(name=src, storage_type='table')
+                self.kg.add_node(src_node)
 
-        # Add edges: source -> transformation (consumes) and transformation -> target (produces)
-        for src in sources:
-            consume = ConsumesEdge(
-                source=file_path,
-                target=src,
-                transformation_type='sql',
-                source_file=file_path,
-                line_range=None
-            )
-            self.kg.add_edge(consume)
+                # Create transformation node for this SQL file
+                trans_node = TransformationNode(
+                    source_datasets=[src],
+                    target_datasets=[target],
+                    transformation_type='sql',
+                    source_file=file_path,
+                    line_range=None  # could be derived from operations
+                )
+                self.kg.add_node(trans_node)
 
-        produce = ProducesEdge(
-            source=file_path,
-            target=target,
-            transformation_type='sql',
-            source_file=file_path,
-            line_range=None
-        )
-        self.kg.add_edge(produce)
+                # Add consumes edge (source → transformation)
+                consume = ConsumesEdge(
+                    source=file_path,
+                    target=src,
+                    transformation_type='sql',
+                    source_file=file_path,
+                    line_range=None
+                )
+                self.kg.add_edge(consume)
+
+                # Add produces edge (transformation → target)
+                produce = ProducesEdge(
+                    source=file_path,
+                    target=target,
+                    transformation_type='sql',
+                    source_file=file_path,
+                    line_range=None
+                )
+                self.kg.add_edge(produce)
 
     def _process_yaml(self, file_path):
         result = self.yaml_analyzer.analyze_file(file_path)
