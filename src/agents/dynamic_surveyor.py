@@ -21,6 +21,7 @@ YAML_ANALYZER = YAMLAnalyzer()
 
 class LanguageRouter:
     EXT_MAP = {'.py': 'python', '.sql': 'sql', '.yml': 'yaml', '.yaml': 'yaml'}
+    file_paths = []
 
     def __init__(self):
         self.languages = {}
@@ -35,7 +36,8 @@ class LanguageRouter:
                     self.parsers[lang] = parser
                     logger.info(f"[LanguageRouter] Loaded language '{lang}'")
                 except Exception as e:
-                    logger.debug(f"[LanguageRouter] Failed to load language '{lang}': {e}")
+                    logger.error(f"Error processing {file_path}: {e}", exc_info=True)
+                    continue   # ensure loop continues
             else:
                 logger.debug(f"[LanguageRouter] Skipping grammar for '{lang}' – using external analyzer")
 
@@ -44,6 +46,19 @@ class LanguageRouter:
         if lang == 'python' and lang in self.parsers:
             return self.parsers[lang], lang
         return None, lang
+    def analyze_repo(self, repo_path):
+        total_files = 0
+        for root, _, files in os.walk(repo_path):
+            for fname in files:
+                total_files += 1
+        processed = 0
+        for root, _, files in os.walk(repo_path):
+            for fname in files:
+                processed += 1
+                if processed % 100 == 0:
+                    logger.info(f"Surveyor: processed {processed}/{total_files} files")
+                # ... process file ...
+        logger.info(f"Surveyor finished. Processed {processed} files.")
 
 class DynamicSurveyor:
     def __init__(self, knowledge_graph: KnowledgeGraph):
