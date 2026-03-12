@@ -7,7 +7,7 @@ Now with enriched edge metadata and more detailed Python data flow analysis.
 import os
 import logging
 from tree_sitter import Parser
-from src.utils.language_loader import load_language
+from src.utils.loader import load_language
 from src.graph.knowledge_graph import KnowledgeGraph
 from src.models.node_types import DatasetNode, TransformationNode
 from src.models.edge_types import ConsumesEdge, ProducesEdge
@@ -30,9 +30,10 @@ class PythonDataFlowAnalyzer:
     """
 
     def __init__(self):
+        # Use per-language .so for Python grammar
         self.language = load_language('python')
         self.parser = Parser()
-        self.parser.set_language(self.language)
+        self.parser.language = self.language
 
     def analyze_file(self, file_path):
         """Return a list of operation records (dicts)."""

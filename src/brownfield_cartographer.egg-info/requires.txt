@@ -1,5 +1,7 @@
-gitpython>=3.1.46
-networkx>=3.6.1
-pydantic>=2.12.5
-pyyaml>=6.0.3
-tree-sitter>=0.22.0
+tree-sitter
+pyyaml
+pydantic
+networkx
+gitpython
+tree-sitter-languages>=1.10.2
+sqlglot>=29.0.1

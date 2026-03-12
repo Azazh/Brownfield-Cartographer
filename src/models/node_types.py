@@ -22,6 +22,7 @@ class ModuleNode(BaseModel):
     # Graph analytics fields
     pagerank: float = 0.0
     scc_id: Optional[int] = None                    # ID of the strongly connected component
+    documentation_drift: Optional[bool] = None      # Flag for doc drift (Semanticist)
 
 class DatasetNode(BaseModel):
     """Represents a data set (table, file, stream)."""

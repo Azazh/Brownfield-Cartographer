@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 import argparse
 import os
 import sys
@@ -6,6 +7,13 @@ import tempfile
 import subprocess
 import logging
 from src.orchestrator import run_analysis
+
+# Load .env if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
@@ -30,15 +38,15 @@ def main():
     parser.add_argument('--sql-dialect', type=str, default='duckdb',
                         help='SQL dialect for parsing (e.g., duckdb, postgres, bigquery, snowflake). Default: duckdb')
     args = parser.parse_args()
-
     repo_path = args.repo
     output_dir = args.output
     sql_dialect = args.sql_dialect
 
-    # If the repo argument looks like a URL, clone it first
+    temp_dir = None
     if repo_path.startswith(('http://', 'https://', 'git@')):
         logger.info("Detected remote repository URL – cloning...")
-        repo_path = clone_repo(repo_path)
+        temp_dir = clone_repo(repo_path)
+        repo_path = temp_dir
 
     try:
         run_analysis(repo_path, output_dir, sql_dialect=sql_dialect)
@@ -47,7 +55,7 @@ def main():
         sys.exit(1)
     finally:
         # Optional cleanup of temporary clone
-        if 'temp_dir' in locals() and os.path.exists(temp_dir):
+        if temp_dir is not None and os.path.exists(temp_dir):
             import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)
             logger.info(f"Cleaned up temporary directory {temp_dir}")

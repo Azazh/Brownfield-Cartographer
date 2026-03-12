@@ -58,16 +58,21 @@ class KnowledgeGraph:
         return None
 
     def to_json_serializable(self) -> Dict[str, Any]:
-        """Convert the graph to a JSON‑serializable dict (node‑link format)."""
-        data = nx.node_link_data(self.graph)
-        # Convert each node's 'model' attribute to a dict (Pydantic models can use .dict())
-        for node_data in data['nodes']:
-            if 'model' in node_data:
-                node_data['model'] = node_data['model'].dict()
-        # Convert each edge's 'model' attribute
-        for link in data['links']:
-            if 'model' in link:
-                link['model'] = link['model'].dict()
+        """Convert the graph to a JSON‑serializable dict (node‑link format), recursively converting all Pydantic models to dicts."""
+        import copy
+        def recursive_to_dict(obj):
+            if hasattr(obj, 'dict'):
+                return recursive_to_dict(obj.dict())
+            elif isinstance(obj, dict):
+                return {k: recursive_to_dict(v) for k, v in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [recursive_to_dict(x) for x in obj]
+            else:
+                return obj
+        data = copy.deepcopy(nx.node_link_data(self.graph))
+        if 'links' not in data:
+            data['links'] = []
+        data = recursive_to_dict(data)
         return data
 
     @classmethod

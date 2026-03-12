@@ -2,7 +2,7 @@
 name = "brownfield-cartographer"
 version = "0.1.0"
 description = "Brownfield Cartographer"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "tree-sitter",
     "pyyaml",
@@ -11,4 +11,6 @@ dependencies = [
     "gitpython",
     "tree-sitter-languages>=1.10.2",
     "sqlglot>=29.0.1",
+    "python-dotenv",
+    "google-generativeai",
 ]

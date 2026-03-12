@@ -3,10 +3,11 @@ import logging
 import networkx as nx
 from tree_sitter import Parser
 
-from src.utils.language_loader import load_language
+from src.utils.loader import load_language
 from src.analyzers.tree_sitter_analyzer import TreeSitterAnalyzer
 from src.analyzers.sql_analyzer import SQLAnalyzer
 from src.analyzers.yaml_analyzer import YAMLAnalyzer
+from src.analyzers.language_router import LanguageRouter
 from src.graph.knowledge_graph import KnowledgeGraph
 from src.models.node_types import ModuleNode
 from src.models.edge_types import ImportEdge
@@ -14,98 +15,80 @@ from src.analyzers.git_velocity import extract_git_velocity
 
 logger = logging.getLogger(__name__)
 
-# Analyzer instances
-PY_ANALYZER = TreeSitterAnalyzer()
-SQL_ANALYZER = SQLAnalyzer(dialect='duckdb')
-YAML_ANALYZER = YAMLAnalyzer()
 
-class LanguageRouter:
-    EXT_MAP = {'.py': 'python', '.sql': 'sql', '.yml': 'yaml', '.yaml': 'yaml'}
-    file_paths = []
 
-    def __init__(self):
-        self.languages = {}
-        self.parsers = {}
-        # Only Python grammar is loaded; SQL/YAML are handled by external analyzers
-        for lang in set(self.EXT_MAP.values()):
-            if lang == 'python':
-                try:
-                    self.languages[lang] = load_language(lang)
-                    parser = Parser()
-                    parser.set_language(self.languages[lang])
-                    self.parsers[lang] = parser
-                    logger.info(f"[LanguageRouter] Loaded language '{lang}'")
-                except Exception as e:
-                    logger.error(f"Error processing {file_path}: {e}", exc_info=True)
-                    continue   # ensure loop continues
-            else:
-                logger.debug(f"[LanguageRouter] Skipping grammar for '{lang}' – using external analyzer")
-
-    def get_parser_and_lang(self, ext: str):
-        lang = self.EXT_MAP.get(ext.lower())
-        if lang == 'python' and lang in self.parsers:
-            return self.parsers[lang], lang
-        return None, lang
-    def analyze_repo(self, repo_path):
-        total_files = 0
-        for root, _, files in os.walk(repo_path):
-            for fname in files:
-                total_files += 1
-        processed = 0
-        for root, _, files in os.walk(repo_path):
-            for fname in files:
-                processed += 1
-                if processed % 100 == 0:
-                    logger.info(f"Surveyor: processed {processed}/{total_files} files")
-                # ... process file ...
-        logger.info(f"Surveyor finished. Processed {processed} files.")
+TS_ANALYZER = TreeSitterAnalyzer()
 
 class DynamicSurveyor:
     def __init__(self, knowledge_graph: KnowledgeGraph):
         self.kg = knowledge_graph
         self.router = LanguageRouter()
 
+
     def analyze_repo(self, repo_path: str) -> dict:
         """
-        Analyze the repository, build the module graph, compute analytics,
-        and return a structured report.
+        Analyze the repository, build the module graph (multi-language), compute analytics,
+        and return a structured report. Compliant with challenge architecture.
         """
         file_paths = []   # for git velocity
 
-        # --- First pass: collect all Python modules and add them to the KG ---
+        total_files = sum(len(files) for _, _, files in os.walk(repo_path))
+        processed = 0
         for root, _, files in os.walk(repo_path):
             for fname in files:
                 ext = os.path.splitext(fname)[1].lower()
                 file_path = os.path.join(root, fname)
                 parser, lang = self.router.get_parser_and_lang(ext)
-
-                if lang == 'python':
-                    result = PY_ANALYZER.analyze_module(file_path, base_path=repo_path)
-                    if result:
-                        file_paths.append(file_path)
-                        module_node = ModuleNode(
-                            path=file_path,
-                            language='python',
-                            imports=result.imports,
-                            public_functions=result.public_functions,
-                            classes=result.classes,
-                            class_inheritance=result.class_inheritance,
-                            change_velocity_30d=0,
-                            is_dead_code_candidate=False   # will be updated later
-                        )
-                        self.kg.add_node(module_node)
-
-                        # Add import edges (simplified – we don't resolve fully here)
-                        for imp in result.imports:
-                            edge = ImportEdge(
-                                source=file_path,
-                                target=imp,   # may need resolution; for now keep as string
-                                weight=1,
-                                source_file=file_path
+                processed += 1
+                if processed % 100 == 0 or processed == total_files:
+                    logger.info(f"[Surveyor] Processed {processed}/{total_files} files...")
+                try:
+                    if lang in ('python', 'sql', 'yaml'):
+                        try:
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                code = f.read()
+                        except Exception as e:
+                            logger.error(f"[Surveyor] Could not read {file_path}: {e}", exc_info=True)
+                            continue
+                        result = TS_ANALYZER.analyze(code, lang)
+                        if not result:
+                            continue
+                        # For Python, use ModuleNode; for SQL/YAML, use DatasetNode or generic node
+                        if lang == 'python':
+                            file_paths.append(file_path)
+                            module_node = ModuleNode(
+                                path=file_path,
+                                language='python',
+                                imports=result['imports'],
+                                public_functions=result['public_functions'],
+                                classes=result['classes'],
+                                class_inheritance=result['class_inheritance'],
+                                change_velocity_30d=0,
+                                is_dead_code_candidate=False
                             )
-                            self.kg.add_edge(edge)
-
-                # SQL and YAML are not processed by Surveyor – they belong to Hydrologist
+                            self.kg.add_node(module_node)
+                            # Add import edges (including star/dynamic flags)
+                            for imp in result['imports']:
+                                edge = ImportEdge(
+                                    source=file_path,
+                                    target=imp,
+                                    weight=1,
+                                    source_file=file_path
+                                )
+                                self.kg.add_edge(edge)
+                        elif lang == 'sql':
+                            from src.models.node_types import DatasetNode
+                            for table in result['tables']:
+                                ds_node = DatasetNode(name=table, storage_type='table')
+                                self.kg.add_node(ds_node)
+                        elif lang == 'yaml':
+                            from src.models.node_types import DatasetNode
+                            for key in result['top_level_keys']:
+                                ds_node = DatasetNode(name=key, storage_type='yaml_key')
+                                self.kg.add_node(ds_node)
+                except Exception as e:
+                    logger.error(f"[Surveyor] Error processing {file_path}: {e}", exc_info=True)
+                    continue
 
         # --- Compute git velocity ---
         git_velocity = extract_git_velocity(file_paths)

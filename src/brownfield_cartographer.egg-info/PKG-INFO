@@ -1,36 +1,12 @@
 Metadata-Version: 2.4
 Name: brownfield-cartographer
 Version: 0.1.0
-Summary: Add your description here
-Requires-Python: >=3.11
-Description-Content-Type: text/markdown
-Requires-Dist: gitpython>=3.1.46
-Requires-Dist: networkx>=3.6.1
-Requires-Dist: pydantic>=2.12.5
-Requires-Dist: pyyaml>=6.0.3
-Requires-Dist: tree-sitter>=0.22.0
-
-# The Brownfield Cartographer
-
-A multi-agent codebase intelligence system for rapid FDE onboarding in production data engineering environments.
-
-## Project Structure
-
-- `src/` - Source code
-  - `cli.py` - Command-line entry point
-  - `orchestrator.py` - Pipeline orchestrator
-  - `agents/` - Agent implementations
-  - `analyzers/` - Static and semantic analyzers
-  - `graph/` - Knowledge graph logic
-  - `models/` - Pydantic schemas
-- `.cartography/` - Generated artifacts (graphs, reports)
-- `tests/` - Test suite
-- `docs/` - Documentation
-
-## Getting Started
-
-1. Install dependencies: `poetry install`
-2. Run analysis: `python src/cli.py --help`
-
-## License
-MIT
+Summary: Brownfield Cartographer
+Requires-Python: >=3.12
+Requires-Dist: tree-sitter
+Requires-Dist: pyyaml
+Requires-Dist: pydantic
+Requires-Dist: networkx
+Requires-Dist: gitpython
+Requires-Dist: tree-sitter-languages>=1.10.2
+Requires-Dist: sqlglot>=29.0.1
