@@ -1,10 +1,19 @@
+
 import os
 import json
 import datetime
 import logging
 from src.agents.dynamic_surveyor import DynamicSurveyor
 from src.agents.hydrologist import HydrologistAgent
+from src.agents.semanticist import SemanticistAgent
 from src.graph.knowledge_graph import KnowledgeGraph
+
+# Load .env if present (redundant if already loaded in CLI, but safe for direct use)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +87,21 @@ def run_analysis(repo_path: str, output_dir: str = '.cartography', sql_dialect: 
     with open(lineage_path, 'w', encoding='utf-8') as f:
         json.dump(lineage_graph, f, indent=2)
     logger.info(f"Lineage graph saved to {lineage_path}")
+
+    # Phase 3: Semanticist
+    logger.info("=" * 50)
+    logger.info("Phase 3: Semanticist – semantic analysis (LLM-powered)")
+    logger.info("=" * 50)
+    from src.llm import LLMClient
+    # Instantiate LLMClient with environment/config support
+    llm_client = LLMClient()
+    semanticist = SemanticistAgent(kg, llm_client=llm_client)
+    # Pass surveyor and hydrologist reports for Day-One answers
+    semantic_report = semanticist.analyze_repo(repo_path, surveyor_report=report, hydrologist_report={})
+    semantic_report_path = os.path.join(output_dir, f'semanticist_report_{timestamp}.json')
+    with open(semantic_report_path, 'w', encoding='utf-8') as f:
+        json.dump(semantic_report, f, indent=2)
+    logger.info(f"Semanticist report saved to {semantic_report_path}")
 
     logger.info("=" * 50)
     logger.info("Analysis complete. Artifacts are in: %s", output_dir)
