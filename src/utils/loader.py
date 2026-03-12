@@ -2,7 +2,7 @@ import ctypes
 import os
 from tree_sitter import Language
 
-LANGUAGE_SO = os.path.join(os.path.dirname(__file__), '../../build/my-languages.so')
+LANGUAGE_SO = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../build/my-languages.so'))
 
 def load_language(lang_name):
     """

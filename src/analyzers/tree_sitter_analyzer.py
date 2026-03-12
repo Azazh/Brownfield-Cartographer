@@ -1,13 +1,16 @@
+
 import os
-import logging
-from tree_sitter import Parser
-from src.utils.language_loader import load_language
+from tree_sitter import Parser, Query
+from src.utils.loader import load_language
 from src.models.module_node import ModuleNode
 from typing import List, Dict, Any, Optional
 
-logger = logging.getLogger(__name__)
 
 
+# Path to the shared library built with all grammars
+GRAMMAR_LIB = os.path.abspath('build/my-languages.so')
+
+# Load languages from the shared library using the robust loader
 LANGUAGES = {
     'python': load_language('python'),
     'sql': load_language('sql'),
@@ -15,41 +18,47 @@ LANGUAGES = {
 }
 
 class TreeSitterAnalyzer:
+
     """
     Multi-language AST analyzer for Python, SQL, and YAML using tree-sitter.
-    Returns structured outputs for all languages.
+    Returns structured outputs for all languages. Supports S-expression queries.
     """
     def __init__(self):
         self.parsers = {}
         for lang, lang_obj in LANGUAGES.items():
             parser = Parser()
-            parser.set_language(lang_obj)
+            parser.language = lang_obj
             self.parsers[lang] = parser
 
-    def analyze(self, path: str, lang: str, base_path: str = None) -> Optional[dict]:
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                code = f.read()
-        except Exception as e:
-            logger.error(f"Failed to read {path}: {e}")
-            return None
-        parser = self.parsers.get(lang)
-        if not parser:
-            logger.error(f"No parser for language: {lang}")
-            return None
-        try:
-            tree = parser.parse(bytes(code, 'utf8'))
-        except Exception as e:
-            logger.error(f"Failed to parse {path}: {e}")
-            return None
+    def analyze(self, code: str, lang: str, file_path: str = "", base_path: str = ""):
+        """
+        Analyze code for the given language and return a structured dict of extracted features.
+        Supports: python, sql, yaml.
+        """
+        parser = self.parsers[lang]
+        tree = parser.parse(code.encode('utf8'))
         root = tree.root_node
         if lang == 'python':
-            return self._analyze_python(root, code, path, base_path)
+            return self._analyze_python(root, code, file_path, base_path)
         elif lang == 'sql':
-            return self._analyze_sql(root, code, path)
+            return self._analyze_sql(root, code, file_path)
         elif lang == 'yaml':
-            return self._analyze_yaml(root, code, path)
-        return None
+            return self._analyze_yaml(root, code, file_path)
+        else:
+            # Fallback: just return the AST root (legacy)
+            return {'ast_root': root, 'path': file_path, 'language': lang}
+
+    def query_ast(self, code: str, lang: str, sexpr: str):
+        """
+        Query the AST using an S-expression (tree-sitter Query syntax).
+        Returns a list of captures.
+        """
+        parser = self.parsers[lang]
+        tree = parser.parse(code.encode('utf8'))
+        root = tree.root_node
+        query = Query(LANGUAGES[lang], sexpr)
+        captures = query.captures(root)
+        return captures
 
     def _analyze_python(self, root, code, file_path, base_path):
         imports, star_imports, dynamic_imports = self._extract_imports_python(root, code, file_path, base_path)

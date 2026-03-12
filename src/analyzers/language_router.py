@@ -1,5 +1,6 @@
 import os
-from tree_sitter import Language, Parser
+from tree_sitter import Parser
+from src.utils.loader import load_language
 from typing import Dict
 
 class LanguageRouter:
@@ -15,15 +16,15 @@ class LanguageRouter:
     }
 
 
-    def __init__(self, so_path: str):
+    def __init__(self):
         try:
             self.languages = {}
             self.parsers = {}
             for lang in set(self.EXT_MAP.values()):
                 try:
-                    self.languages[lang] = Language(so_path, lang)
+                    self.languages[lang] = load_language(lang)
                     parser = Parser()
-                    parser.set_language(self.languages[lang])
+                    parser.language = self.languages[lang]
                     self.parsers[lang] = parser
                 except Exception as e:
                     import traceback

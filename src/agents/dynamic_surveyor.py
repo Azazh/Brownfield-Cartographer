@@ -3,10 +3,11 @@ import logging
 import networkx as nx
 from tree_sitter import Parser
 
-from src.utils.language_loader import load_language
+from src.utils.loader import load_language
 from src.analyzers.tree_sitter_analyzer import TreeSitterAnalyzer
 from src.analyzers.sql_analyzer import SQLAnalyzer
 from src.analyzers.yaml_analyzer import YAMLAnalyzer
+from src.analyzers.language_router import LanguageRouter
 from src.graph.knowledge_graph import KnowledgeGraph
 from src.models.node_types import ModuleNode
 from src.models.edge_types import ImportEdge
@@ -37,13 +38,19 @@ class DynamicSurveyor:
             for fname in files:
                 ext = os.path.splitext(fname)[1].lower()
                 file_path = os.path.join(root, fname)
-                lang = self.router.get_lang(ext)
+                parser, lang = self.router.get_parser_and_lang(ext)
                 processed += 1
                 if processed % 100 == 0 or processed == total_files:
                     logger.info(f"[Surveyor] Processed {processed}/{total_files} files...")
                 try:
                     if lang in ('python', 'sql', 'yaml'):
-                        result = TS_ANALYZER.analyze(file_path, lang, base_path=repo_path)
+                        try:
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                code = f.read()
+                        except Exception as e:
+                            logger.error(f"[Surveyor] Could not read {file_path}: {e}", exc_info=True)
+                            continue
+                        result = TS_ANALYZER.analyze(code, lang)
                         if not result:
                             continue
                         # For Python, use ModuleNode; for SQL/YAML, use DatasetNode or generic node
