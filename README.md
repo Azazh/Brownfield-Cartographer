@@ -78,17 +78,36 @@ Built for the **TRP1 Week 4 Challenge** – a forward‑deployed engineering too
 
 ## Usage
 
-Run the analysis on any local repository (e.g., dbt's `jaffle-shop-classic`):
+
+### Analyze Command
+
+To run the full analysis pipeline on any local or remote repository:
 
 ```bash
-make run --repo /path/to/target/repo
+make run REPO=/path/to/target/repo OUTPUT=.cartography
 # or directly
-.venv/bin/python -m src.cli --repo /path/to/target/repo
+.venv/bin/python -m src.cli --repo /path/to/target/repo --output .cartography
 ```
 
-The tool will execute both Surveyor and Hydrologist, saving results in `.cartography/`:
-- `analysis_results_<timestamp>.json` – module graph, imports, git velocity.
-- `lineage_graph.json` – data lineage DAG (nodes and edges).
+#### Arguments
+- `--repo`: Path to local repo or GitHub URL (required)
+- `--output`: Output directory for artifacts (default: .cartography)
+- `--sql-dialect`: SQL dialect for parsing (default: duckdb)
+
+#### Outputs
+Artifacts are saved in `.cartography/`:
+- `module_graph.json`: Module import graph (static structure)
+- `lineage_graph.json`: DataLineageGraph (dataset/transformation nodes and lineage edges)
+- `knowledge_graph_<timestamp>.json`: Full knowledge graph (all nodes/edges)
+- `surveyor_report_<timestamp>.json`: Surveyor static structure results
+
+You must submit `.cartography/module_graph.json` and `.cartography/lineage_graph.json` for the interim deliverable.
+
+#### Typical Workflow
+1. Clone this repo and install dependencies (see Installation).
+2. Build the tree-sitter shared library with all grammars (see Installation).
+3. Run the analysis as above.
+4. Inspect `.cartography/` for outputs. Use `module_graph.json` and `lineage_graph.json` for interim submission.
 
 ## Example
 

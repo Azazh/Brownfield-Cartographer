@@ -32,6 +32,23 @@ def run_analysis(repo_path: str, output_dir: str = '.cartography', sql_dialect: 
         json.dump(report, f, indent=2)
     logger.info(f"Surveyor report saved to {report_path}")
 
+    # Save module import graph (only module nodes and import edges)
+    module_nodes = []
+    import_edges = []
+    for n, data in kg.graph.nodes(data=True):
+        model = data.get('model')
+        if model and type(model).__name__ == 'ModuleNode':
+            module_nodes.append(model.dict())
+    for u, v, k, data in kg.graph.edges(keys=True, data=True):
+        model = data.get('model')
+        if model and type(model).__name__ == 'ImportEdge':
+            import_edges.append(model.dict())
+    module_graph = {'nodes': module_nodes, 'edges': import_edges}
+    module_graph_path = os.path.join(output_dir, 'module_graph.json')
+    with open(module_graph_path, 'w', encoding='utf-8') as f:
+        json.dump(module_graph, f, indent=2)
+    logger.info(f"Module graph saved to {module_graph_path}")
+
     # Phase 2: Hydrologist
     logger.info("=" * 50)
     logger.info("Phase 2: Hydrologist – data lineage analysis")
@@ -39,10 +56,28 @@ def run_analysis(repo_path: str, output_dir: str = '.cartography', sql_dialect: 
     hydrologist = HydrologistAgent(kg, sql_dialect=sql_dialect)
     hydrologist.analyze_repo(repo_path)
 
+    # Save full knowledge graph (all nodes/edges)
     kg_path = os.path.join(output_dir, f'knowledge_graph_{timestamp}.json')
     with open(kg_path, 'w', encoding='utf-8') as f:
         json.dump(kg.to_json_serializable(), f, indent=2)
     logger.info(f"Knowledge graph saved to {kg_path}")
+
+    # Save DataLineageGraph (only dataset/transformation nodes and lineage edges)
+    lineage_nodes = []
+    lineage_edges = []
+    for n, data in kg.graph.nodes(data=True):
+        model = data.get('model')
+        if model and type(model).__name__ in ('DatasetNode', 'TransformationNode'):
+            lineage_nodes.append(model.dict())
+    for u, v, k, data in kg.graph.edges(keys=True, data=True):
+        model = data.get('model')
+        if model and type(model).__name__ in ('ProducesEdge', 'ConsumesEdge'):
+            lineage_edges.append(model.dict())
+    lineage_graph = {'nodes': lineage_nodes, 'edges': lineage_edges}
+    lineage_path = os.path.join(output_dir, 'lineage_graph.json')
+    with open(lineage_path, 'w', encoding='utf-8') as f:
+        json.dump(lineage_graph, f, indent=2)
+    logger.info(f"Lineage graph saved to {lineage_path}")
 
     logger.info("=" * 50)
     logger.info("Analysis complete. Artifacts are in: %s", output_dir)
