@@ -81,17 +81,41 @@ class DataLineageGraph:
         return g
 
 class HydrologistAgent:
-    def __init__(self, knowledge_graph=None, sql_dialect='duckdb'):
+    def __init__(self, knowledge_graph=None, sql_dialect='duckdb', trace_logger=None):
         self.kg = knowledge_graph
         self.py_analyzer = PythonDataFlowAnalyzer()
         self.sql_analyzer = SQLLineageAnalyzer(dialect=sql_dialect)
         self.yaml_analyzer = DbtYamlAnalyzer()
         self.lineage_graph = DataLineageGraph()
+        self.trace_logger = trace_logger
 
-    def analyze_repo(self, repo_path):
+    def analyze_repo(self, repo_path, changed_files=None, added_files=None, deleted_files=None):
         """
-        Walk repo, collect lineage from all relevant files.
+        Walk repo, collect lineage from all relevant files. Supports incremental update via changed_files, added_files, deleted_files.
         """
+        if changed_files or added_files or deleted_files:
+            logger.info(f"[Hydrologist] Incremental update: changed={changed_files}, added={added_files}, deleted={deleted_files}")
+            # Remove deleted files' nodes from the lineage graph
+            if deleted_files:
+                for node in list(self.kg.graph.nodes()):
+                    model = self.kg.graph.nodes[node].get('model')
+                    if hasattr(model, 'source_file') and model.source_file in deleted_files:
+                        self.kg.graph.remove_node(node)
+            # Re-analyze changed and added files
+            files_to_process = (changed_files or []) + (added_files or [])
+            for file_path in files_to_process:
+                ext = os.path.splitext(file_path)[1].lower()
+                try:
+                    if ext == '.py':
+                        self._process_python(file_path)
+                    elif ext == '.sql':
+                        self._process_sql(file_path)
+                    elif ext in ('.yml', '.yaml'):
+                        self._process_yaml(file_path)
+                except Exception as e:
+                    logger.error(f"Error processing {file_path}: {e}", exc_info=True)
+            return self.lineage_graph
+        # Walk repo, collect lineage from all relevant files.
         for root, _, files in os.walk(repo_path):
             for file in files:
                 file_path = os.path.join(root, file)

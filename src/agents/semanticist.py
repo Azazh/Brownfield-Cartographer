@@ -1,4 +1,3 @@
-
 import logging
 import json
 from src.graph.knowledge_graph import KnowledgeGraph
@@ -82,15 +81,49 @@ class SemanticistAgent:
     # - Flags documentation drift
     # - Clusters modules into domains
     # - Answers the Five FDE Day-One Questions
-    def __init__(self, knowledge_graph: KnowledgeGraph, llm_client=None):
+    def __init__(self, knowledge_graph: KnowledgeGraph, llm_client=None, trace_logger=None):
         self.kg = knowledge_graph
         self.llm_client = llm_client  # Should be an LLMClient instance
+        self.trace_logger = trace_logger
 
-    def analyze_repo(self, repo_path: str, surveyor_report: dict = None, hydrologist_report: dict = None) -> Dict[str, Any]:
+    def analyze_repo(self, repo_path: str, surveyor_report: dict = None, hydrologist_report: dict = None, changed_files=None, added_files=None, deleted_files=None) -> Dict[str, Any]:
         """
         For each ModuleNode, generate a purpose statement using the LLM.
         Then cluster modules into domains and answer Day-One questions.
+        Supports incremental update via changed_files, added_files, deleted_files.
         """
+        if changed_files or added_files or deleted_files:
+            logger.info(f"[Semanticist] Incremental update: changed={changed_files}, added={added_files}, deleted={deleted_files}")
+            # Remove deleted modules from the knowledge graph and semantic index
+            if deleted_files:
+                for node_id, node_model in list(self.kg.graph.nodes(data='model')):
+                    if hasattr(node_model, 'path') and node_model.path in deleted_files:
+                        self.kg.graph.remove_node(node_id)
+            # Only (re)generate purpose statements for changed/added modules
+            files_to_process = (changed_files or []) + (added_files or [])
+            results = {}
+            for node_id, node_model in self.kg.graph.nodes(data='model'):
+                if hasattr(node_model, 'path') and node_model.path in files_to_process:
+                    code = self._read_file(node_model.path)
+                    docstring = self._extract_docstring(code)
+                    purpose = self._generate_purpose_statement(code, docstring)
+                    node_model.purpose_statement = purpose
+                    if docstring and not self._docstring_matches_purpose(docstring, purpose):
+                        node_model.documentation_drift = True
+                    else:
+                        node_model.documentation_drift = False
+                    self.kg.add_node(node_model)
+                    results[node_id] = {
+                        'purpose_statement': purpose,
+                        'documentation_drift': node_model.documentation_drift
+                    }
+            # Re-cluster domains and answer Day-One questions if needed
+            domain_map = self.cluster_into_domains(k=6)
+            results['domain_map'] = domain_map
+            if surveyor_report is not None and hydrologist_report is not None:
+                results['day_one_answers'] = self.answer_day_one_questions(surveyor_report, hydrologist_report)
+            return results
+        # For each ModuleNode, generate a purpose statement using the LLM
         results = {}
         for node_id, node_model in self.kg.graph.nodes(data='model'):
             if isinstance(node_model, ModuleNode):

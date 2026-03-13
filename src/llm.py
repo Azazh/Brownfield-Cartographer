@@ -46,6 +46,7 @@ class LLMClient:
     def call_ollama(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512) -> str:
         models_to_try = [model or self.ollama_default_model, "phi3:mini", "llama3.1:8b"]
         tried = set()
+        errors = []
         for m in models_to_try:
             if m in tried:
                 continue
@@ -64,14 +65,14 @@ class LLMClient:
                 if "response" in data:
                     return data["response"]
             except requests.exceptions.Timeout:
-                print(f"Ollama model '{m}' timed out.")
+                errors.append(f"Ollama model '{m}' timed out.")
             except Exception as e:
-                print(f"Ollama model '{m}' failed: {e}")
-        return "[Ollama error: All local LLMs failed or timed out.]"
+                errors.append(f"Ollama model '{m}' failed: {e}")
+        return f"[Ollama error: All local LLMs failed or timed out. Details: {'; '.join(errors)}]"
 
     def call_gemini(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512) -> str:
         if not _HAS_GENAI:
-            raise ImportError("google-genai is not installed. Please install with 'pip install google-genai'.")
+            return "[Gemini error: google-genai is not installed. Please install with 'pip install google-genai'.]"
         model_name = model or self.gemini_model or "gemini-3-flash-preview"
         try:
             client = genai.Client()
@@ -81,23 +82,46 @@ class LLMClient:
             )
             return response.text
         except Exception as e:
-            raise RuntimeError(f"Gemini API error: {e}")
+            return f"[Gemini error: {e}]"
 
     def generate_purpose_statement(self, code: str, docstring: Optional[str] = None, prefer_fast: bool = True) -> str:
-        # Use Gemini Flash or phi3:mini for bulk, llama3.1:8b for higher quality
         budget = ContextWindowBudget()
         tokens = budget.estimate_tokens(code)
         prompt = self._purpose_prompt(code, docstring)
+        errors = []
+
+        # 1. Try Gemini first if conditions met
         if prefer_fast and tokens < 6000 and self.gemini_api_key:
-            try:
-                return self.call_gemini(prompt, model="gemini-3-flash-preview", max_tokens=256)
-            except Exception as e:
-                # Fallback to Ollama phi3:mini for any Gemini error
-                return self.call_ollama(prompt, model="phi3:mini", max_tokens=256)
-        elif prefer_fast and tokens < 6000:
-            return self.call_ollama(prompt, model="phi3:mini", max_tokens=256)
-        else:
-            return self.call_ollama(prompt, model="llama3.1:8b", max_tokens=256)
+            gemini_result = self.call_gemini(prompt, model="gemini-3-flash-preview", max_tokens=256)
+            if not gemini_result.startswith("[Gemini error"):
+                return gemini_result
+            errors.append(gemini_result)
+
+        # 2. Try local models in order: phi3:mini, llama3.1:8b, then default model if not covered
+        # Try phi3:mini
+        ollama_result = self.call_ollama(prompt, model="phi3:mini", max_tokens=256)
+        if not ollama_result.startswith("[Ollama error"):
+            return ollama_result
+        errors.append(ollama_result)
+
+        # Try llama3.1:8b (always, not conditional on previous error)
+        ollama_result2 = self.call_ollama(prompt, model="llama3.1:8b", max_tokens=256)
+        if not ollama_result2.startswith("[Ollama error"):
+            return ollama_result2
+        errors.append(ollama_result2)
+
+        # Try the default model if it's not one of the already tried ones
+        default_model = self.ollama_default_model
+        if default_model not in ["phi3:mini", "llama3.1:8b"]:
+            ollama_result3 = self.call_ollama(prompt, model=default_model, max_tokens=256)
+            if not ollama_result3.startswith("[Ollama error"):
+                return ollama_result3
+            errors.append(ollama_result3)
+
+        # 3. All models failed → return placeholder sentence
+        placeholder = "Unable to generate purpose statement due to LLM unavailability."
+        # Optionally log errors here if needed, but return only the placeholder
+        return placeholder
 
     def _purpose_prompt(self, code: str, docstring: Optional[str]) -> str:
         prompt = (
