@@ -28,13 +28,54 @@ def run_analysis(repo_path: str, output_dir: str = '.cartography', sql_dialect: 
 
     kg = KnowledgeGraph()
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    from src.agents.trace_logger import TraceLogger
+    trace_log_path = os.path.join(output_dir, 'cartography_trace.jsonl')
+    trace_logger = TraceLogger(trace_log_path)
 
-    # Phase 1: Surveyor
+    # --- Incremental update logic ---
+    last_commit_path = os.path.join(output_dir, 'last_commit.txt')
+    last_commit = None
+    changed_files, added_files, deleted_files = [], [], []
+    current_commit = None
+    try:
+        import subprocess
+        # Get current HEAD commit
+        current_commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo_path).decode().strip()
+        if os.path.exists(last_commit_path):
+            with open(last_commit_path, 'r') as f:
+                last_commit = f.read().strip()
+            if last_commit:
+                # Get changed/added/deleted files since last commit
+                diff_cmd = ['git', 'diff', '--name-status', f'{last_commit}..{current_commit}']
+                diff_out = subprocess.check_output(diff_cmd, cwd=repo_path).decode().splitlines()
+                for line in diff_out:
+                    status, path = line.split('\t', 1)
+                    if status == 'A':
+                        added_files.append(path)
+                    elif status == 'M':
+                        changed_files.append(path)
+                    elif status == 'D':
+                        deleted_files.append(path)
+        else:
+            # No last commit, treat as full run
+            changed_files = added_files = deleted_files = []
+    except Exception as e:
+        logger.warning(f"Could not determine git commit or diff: {e}. Running full analysis.")
+        changed_files = added_files = deleted_files = []
+
+    # If no last commit or no changes, do full run
+    incremental = bool(last_commit and (changed_files or added_files or deleted_files))
+    if not incremental:
+        logger.info("No previous commit or no changes detected. Running full analysis.")
+        changed_files = added_files = deleted_files = []
+
+    # --- Phase 1: Surveyor ---
     logger.info("=" * 50)
     logger.info("Phase 1: Surveyor – static structure analysis")
     logger.info("=" * 50)
-    surveyor = DynamicSurveyor(kg)
-    report = surveyor.analyze_repo(repo_path)
+    surveyor = DynamicSurveyor(kg, trace_logger=trace_logger)
+    report = surveyor.analyze_repo(repo_path, changed_files=changed_files, added_files=added_files, deleted_files=deleted_files)
+    trace_logger.log(agent="Surveyor", action="analyze_repo", input_data={"repo_path": repo_path, "changed": changed_files, "added": added_files, "deleted": deleted_files}, output_data="survey_report", evidence=None)
 
     report_path = os.path.join(output_dir, f'surveyor_report_{timestamp}.json')
     with open(report_path, 'w', encoding='utf-8') as f:
@@ -58,12 +99,13 @@ def run_analysis(repo_path: str, output_dir: str = '.cartography', sql_dialect: 
         json.dump(module_graph, f, indent=2)
     logger.info(f"Module graph saved to {module_graph_path}")
 
-    # Phase 2: Hydrologist
+    # --- Phase 2: Hydrologist ---
     logger.info("=" * 50)
     logger.info("Phase 2: Hydrologist – data lineage analysis")
     logger.info("=" * 50)
-    hydrologist = HydrologistAgent(kg, sql_dialect=sql_dialect)
-    hydrologist.analyze_repo(repo_path)
+    hydrologist = HydrologistAgent(kg, sql_dialect=sql_dialect, trace_logger=trace_logger)
+    hydrologist.analyze_repo(repo_path, changed_files=changed_files, added_files=added_files, deleted_files=deleted_files)
+    trace_logger.log(agent="Hydrologist", action="analyze_repo", input_data={"repo_path": repo_path, "changed": changed_files, "added": added_files, "deleted": deleted_files}, output_data="lineage_graph", evidence=None)
 
     # Save full knowledge graph (all nodes/edges)
     kg_path = os.path.join(output_dir, f'knowledge_graph_{timestamp}.json')
@@ -88,21 +130,44 @@ def run_analysis(repo_path: str, output_dir: str = '.cartography', sql_dialect: 
         json.dump(lineage_graph, f, indent=2)
     logger.info(f"Lineage graph saved to {lineage_path}")
 
-    # Phase 3: Semanticist
+    # --- Phase 3: Semanticist ---
     logger.info("=" * 50)
     logger.info("Phase 3: Semanticist – semantic analysis (LLM-powered)")
     logger.info("=" * 50)
     from src.llm import LLMClient
-    # Instantiate LLMClient with environment/config support
     llm_client = LLMClient()
-    semanticist = SemanticistAgent(kg, llm_client=llm_client)
-    # Pass surveyor and hydrologist reports for Day-One answers
-    semantic_report = semanticist.analyze_repo(repo_path, surveyor_report=report, hydrologist_report={})
+    semanticist = SemanticistAgent(kg, llm_client=llm_client, trace_logger=trace_logger)
+    semantic_report = semanticist.analyze_repo(repo_path, surveyor_report=report, hydrologist_report={}, changed_files=changed_files, added_files=added_files, deleted_files=deleted_files)
+    trace_logger.log(agent="Semanticist", action="analyze_repo", input_data={"repo_path": repo_path, "changed": changed_files, "added": added_files, "deleted": deleted_files}, output_data="semantic_report", evidence=None)
     semantic_report_path = os.path.join(output_dir, f'semanticist_report_{timestamp}.json')
     with open(semantic_report_path, 'w', encoding='utf-8') as f:
         json.dump(semantic_report, f, indent=2)
     logger.info(f"Semanticist report saved to {semantic_report_path}")
 
+    # --- Phase 4: Archivist ---
+    logger.info("=" * 50)
+    logger.info("Phase 4: Archivist – generating CODEBASE.md")
+    logger.info("=" * 50)
+    from src.agents.archivist import ArchivistAgent
+    hydrologist_report = {}
+    hydrologist_report_path = os.path.join(output_dir, f'hydrologist_report_{timestamp}.json')
+    if os.path.exists(hydrologist_report_path):
+        with open(hydrologist_report_path, 'r', encoding='utf-8') as f:
+            hydrologist_report = json.load(f)
+    archivist = ArchivistAgent(kg, report, hydrologist_report, semantic_report, trace_logger=trace_logger)
+    codebase_md_path = os.path.join(output_dir, 'CODEBASE.md')
+    archivist.generate_CODEBASE_md(codebase_md_path, changed_files=changed_files, added_files=added_files, deleted_files=deleted_files)
+    trace_logger.log(agent="Archivist", action="generate_CODEBASE_md", input_data={"changed": changed_files, "added": added_files, "deleted": deleted_files}, output_data=codebase_md_path, evidence=None)
+    logger.info(f"CODEBASE.md generated at {codebase_md_path}")
+    onboarding_brief_path = os.path.join(output_dir, 'onboarding_brief.md')
+    archivist.generate_onboarding_brief_md(onboarding_brief_path, changed_files=changed_files, added_files=added_files, deleted_files=deleted_files)
+    trace_logger.log(agent="Archivist", action="generate_onboarding_brief_md", input_data={"changed": changed_files, "added": added_files, "deleted": deleted_files}, output_data=onboarding_brief_path, evidence=None)
+    logger.info(f"onboarding_brief.md generated at {onboarding_brief_path}")
+
+    # --- Update last_commit.txt ---
+    if current_commit:
+        with open(last_commit_path, 'w') as f:
+            f.write(current_commit + '\n')
     logger.info("=" * 50)
     logger.info("Analysis complete. Artifacts are in: %s", output_dir)
     logger.info("=" * 50)
