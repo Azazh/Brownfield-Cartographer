@@ -167,14 +167,16 @@ class SemanticistAgent:
         return ""
 
     def _generate_purpose_statement(self, code: str, docstring: str) -> str:
-        # Use the LLMClient for purpose statement generation
+        # Use the LLMClient for purpose statement generation, robust fallback: try each model only once
         if self.llm_client:
             try:
-                return self.llm_client.generate_purpose_statement(code, docstring, prefer_fast=True)
+                result = self.llm_client.generate_purpose_statement(code, docstring, prefer_fast=True)
+                # If result is a known error, do not retry the same model, just try others (handled in LLMClient)
+                return result
             except Exception as e:
                 logger.warning(f"LLM call failed: {e}")
         # Fallback: naive heuristic
-        return f"Purpose statement for module (stub)."
+        return "Purpose statement for module (stub)."
 
     def _docstring_matches_purpose(self, docstring: str, purpose: str) -> bool:
         # Placeholder: naive check
