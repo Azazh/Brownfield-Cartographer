@@ -37,11 +37,17 @@ def main():
                         help='Output directory for artifacts (default: .cartography)')
     parser.add_argument('--sql-dialect', type=str, default='duckdb',
                         help='SQL dialect for parsing (e.g., duckdb, postgres, bigquery, snowflake). Default: duckdb')
+    parser.add_argument('--mode', type=str, default='analyze', choices=['analyze', 'query'],
+                        help='Mode: analyze (default) or query (Navigator agent)')
+    parser.add_argument('--query-tool', type=str, default=None,
+                        help='Navigator tool to use: find_implementation, trace_lineage, blast_radius, explain_module')
+    parser.add_argument('--query-arg', type=str, nargs='*', default=None,
+                        help='Arguments for the query tool (e.g., concept, dataset, direction, module_path, path)')
     args = parser.parse_args()
     repo_path = args.repo
     output_dir = args.output
     sql_dialect = args.sql_dialect
-
+    mode = args.mode
     temp_dir = None
     if repo_path.startswith(('http://', 'https://', 'git@')):
         logger.info("Detected remote repository URL – cloning...")
@@ -49,9 +55,13 @@ def main():
         repo_path = temp_dir
 
     try:
-        run_analysis(repo_path, output_dir, sql_dialect=sql_dialect)
+        if mode == 'analyze':
+            run_analysis(repo_path, output_dir, sql_dialect=sql_dialect)
+        elif mode == 'query':
+            from src.orchestrator import run_query
+            run_query(repo_path, output_dir, args.query_tool, args.query_arg)
     except Exception as e:
-        logger.exception("Fatal error during analysis")
+        logger.exception("Fatal error during analysis/query")
         sys.exit(1)
     finally:
         # Optional cleanup of temporary clone

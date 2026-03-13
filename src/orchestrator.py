@@ -1,4 +1,3 @@
-
 import os
 import json
 import datetime
@@ -171,3 +170,61 @@ def run_analysis(repo_path: str, output_dir: str = '.cartography', sql_dialect: 
     logger.info("=" * 50)
     logger.info("Analysis complete. Artifacts are in: %s", output_dir)
     logger.info("=" * 50)
+
+# --- Navigator Agent Query Interface ---
+def run_query(repo_path: str, output_dir: str, query_tool: str, query_arg: list):
+    """
+    Run a Navigator agent query against the codebase knowledge graph and semantic index.
+    query_tool: one of 'find_implementation', 'trace_lineage', 'blast_radius', 'explain_module'
+    query_arg: list of arguments for the tool
+    """
+    import json
+    import os
+    from src.agents.navigator import NavigatorAgent
+    from src.agents.semanticist import SemanticistAgent
+    from src.llm import LLMClient
+    from src.graph.knowledge_graph import KnowledgeGraph
+
+    # Load knowledge graph from .cartography/module_graph.json (or reconstruct)
+    kg_path = os.path.join(output_dir, 'module_graph.json')
+    if not os.path.exists(kg_path):
+        raise FileNotFoundError(f"Knowledge graph not found at {kg_path}. Run analysis first.")
+    with open(kg_path, 'r', encoding='utf-8') as f:
+        kg_data = json.load(f)
+    kg = KnowledgeGraph.from_json(kg_data)
+
+    # Optionally load vector store/semantic index (not implemented here)
+    vector_store = None
+    # Optionally load semanticist for LLM explanations
+    llm_client = LLMClient()
+    semanticist = SemanticistAgent(kg, llm_client=llm_client)
+    navigator = NavigatorAgent(kg, vector_store=vector_store, semanticist=semanticist)
+
+    # Dispatch query
+    if query_tool == 'find_implementation':
+        if not query_arg or len(query_arg) < 1:
+            print("Error: --query-arg <concept> required for find_implementation")
+            return
+        result = navigator.find_implementation(query_arg[0])
+    elif query_tool == 'trace_lineage':
+        if not query_arg or len(query_arg) < 1:
+            print("Error: --query-arg <dataset> [direction] required for trace_lineage")
+            return
+        dataset = query_arg[0]
+        direction = query_arg[1] if len(query_arg) > 1 else 'upstream'
+        result = navigator.trace_lineage(dataset, direction)
+    elif query_tool == 'blast_radius':
+        if not query_arg or len(query_arg) < 1:
+            print("Error: --query-arg <module_path> required for blast_radius")
+            return
+        result = navigator.blast_radius(query_arg[0])
+    elif query_tool == 'explain_module':
+        if not query_arg or len(query_arg) < 1:
+            print("Error: --query-arg <path> required for explain_module")
+            return
+        result = navigator.explain_module(query_arg[0])
+    else:
+        print(f"Unknown query tool: {query_tool}")
+        return
+    # Print result as pretty JSON
+    print(json.dumps(result, indent=2, ensure_ascii=False))
