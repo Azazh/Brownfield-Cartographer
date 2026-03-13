@@ -5,7 +5,6 @@ import requests
 import json
 from typing import List, Optional
 
-# Gemini official client
 try:
     from google import genai
     _HAS_GENAI = True
@@ -40,55 +39,64 @@ class ContextWindowBudget:
 class LLMClient:
     def __init__(self, ollama_url: Optional[str] = None, gemini_api_key: Optional[str] = None):
         self.ollama_url = ollama_url or os.environ.get("OLLAMA_URL", "http://localhost:11434")
-        self.gemini_api_key = gemini_api_key or os.environ.get("GEMINI_API_KEY", "AIzaSyBLMHl0R4AiuTkmePvuEPmZW80pPmhUXc8")
+        self.gemini_api_key = gemini_api_key or os.environ.get("GEMINI_API_KEY", "AIzaSyC5t_zEJJ3C_dY5V9Od2Z9Hholg84yZKiE")
         self.gemini_model = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
         self.ollama_default_model = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
 
     def call_ollama(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512) -> str:
-        model = model or self.ollama_default_model
-        url = f"{self.ollama_url}/api/generate"
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"num_predict": max_tokens}
-        }
-        resp = requests.post(url, json=payload, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("response", "")
+        models_to_try = [model or self.ollama_default_model, "phi3:mini", "llama3.1:8b"]
+        tried = set()
+        for m in models_to_try:
+            if m in tried:
+                continue
+            tried.add(m)
+            url = f"{self.ollama_url}/api/generate"
+            payload = {
+                "model": m,
+                "prompt": prompt,
+                "stream": False,
+                "options": {"num_predict": max_tokens}
+            }
+            try:
+                resp = requests.post(url, json=payload, timeout=30)
+                resp.raise_for_status()
+                data = resp.json()
+                if "response" in data:
+                    return data["response"]
+            except requests.exceptions.Timeout:
+                print(f"Ollama model '{m}' timed out.")
+            except Exception as e:
+                print(f"Ollama model '{m}' failed: {e}")
+        return "[Ollama error: All local LLMs failed or timed out.]"
 
     def call_gemini(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512) -> str:
         if not _HAS_GENAI:
-            raise ImportError("google-genai is not installed. Please install with 'pip install google-generativeai'.")
-        api_key = self.gemini_api_key
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY not set")
-        os.environ["GEMINI_API_KEY"] = api_key  # Ensure env var is set for client
-        client = genai.Client()
-        model = model or self.gemini_model
+            raise ImportError("google-genai is not installed. Please install with 'pip install google-genai'.")
+        model_name = model or self.gemini_model or "gemini-3-flash-preview"
         try:
+            client = genai.Client()
             response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                generation_config={"max_output_tokens": max_tokens}
+                model=model_name,
+                contents=prompt
             )
             return response.text
         except Exception as e:
-            return f"[Gemini API error: {e}]"
+            raise RuntimeError(f"Gemini API error: {e}")
 
     def generate_purpose_statement(self, code: str, docstring: Optional[str] = None, prefer_fast: bool = True) -> str:
         # Use Gemini Flash or phi3:mini for bulk, llama3.1:8b for higher quality
         budget = ContextWindowBudget()
         tokens = budget.estimate_tokens(code)
+        prompt = self._purpose_prompt(code, docstring)
         if prefer_fast and tokens < 6000 and self.gemini_api_key:
-            prompt = self._purpose_prompt(code, docstring)
-            return self.call_gemini(prompt, model="gemini-3-flash-preview", max_tokens=256)
+            try:
+                return self.call_gemini(prompt, model="gemini-3-flash-preview", max_tokens=256)
+            except Exception as e:
+                # Fallback to Ollama phi3:mini for any Gemini error
+                return self.call_ollama(prompt, model="phi3:mini", max_tokens=256)
         elif prefer_fast and tokens < 6000:
-            prompt = self._purpose_prompt(code, docstring)
             return self.call_ollama(prompt, model="phi3:mini", max_tokens=256)
         else:
-            prompt = self._purpose_prompt(code, docstring)
             return self.call_ollama(prompt, model="llama3.1:8b", max_tokens=256)
 
     def _purpose_prompt(self, code: str, docstring: Optional[str]) -> str:
