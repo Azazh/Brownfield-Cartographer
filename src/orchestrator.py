@@ -193,19 +193,40 @@ def run_query(repo_path: str, output_dir: str, query_tool: str, query_arg: list)
         kg_data = json.load(f)
     kg = KnowledgeGraph.from_json(kg_data)
 
-    # Optionally load vector store/semantic index (not implemented here)
+    # Load vector store/semantic index for CODEBASE.md if present
     vector_store = None
+    codebase_index_path = os.path.join(output_dir, 'codebase_index.npz')
+    if os.path.exists(codebase_index_path):
+        try:
+            from src.vectorstore.simple_numpy import SimpleNumpyVectorStore
+            vector_store = SimpleNumpyVectorStore.load(codebase_index_path)
+            logger.info(f"Loaded CODEBASE.md vector store from {codebase_index_path}")
+        except Exception as e:
+            logger.warning(f"Could not load CODEBASE.md vector store: {e}")
+    else:
+        logger.info(f"CODEBASE.md vector store not found at {codebase_index_path}")
     # Optionally load semanticist for LLM explanations
     llm_client = LLMClient()
     semanticist = SemanticistAgent(kg, llm_client=llm_client)
     navigator = NavigatorAgent(kg, vector_store=vector_store, semanticist=semanticist)
 
-    # Dispatch query
+    from src.agents.trace_logger import TraceLogger
+    trace_log_path = os.path.join(output_dir, 'cartography_trace.jsonl')
+    trace_logger = TraceLogger(trace_log_path)
+
+    # Dispatch query and log
+    result = None
+    evidence = None
+    confidence = None
     if query_tool == 'find_implementation':
         if not query_arg or len(query_arg) < 1:
             print("Error: --query-arg <concept> required for find_implementation")
             return
         result = navigator.find_implementation(query_arg[0])
+        # Evidence: list of evidence objects from results
+        evidence = [r.get('evidence') for r in result.get('results', [])]
+        # Confidence: max score if available
+        confidence = max([e.get('confidence', 0) for e in evidence if e], default=None)
     elif query_tool == 'trace_lineage':
         if not query_arg or len(query_arg) < 1:
             print("Error: --query-arg <dataset> [direction] required for trace_lineage")
@@ -213,18 +234,35 @@ def run_query(repo_path: str, output_dir: str, query_tool: str, query_arg: list)
         dataset = query_arg[0]
         direction = query_arg[1] if len(query_arg) > 1 else 'upstream'
         result = navigator.trace_lineage(dataset, direction)
+        # Evidence: list of evidence objects from results
+        key = 'upstream' if direction == 'upstream' else 'downstream'
+        evidence = [r.get('evidence') for r in result.get(key, [])]
+        confidence = 1.0
     elif query_tool == 'blast_radius':
         if not query_arg or len(query_arg) < 1:
             print("Error: --query-arg <module_path> required for blast_radius")
             return
         result = navigator.blast_radius(query_arg[0])
+        evidence = [r.get('evidence') for r in result.get('affected_nodes', [])]
+        confidence = 1.0
     elif query_tool == 'explain_module':
         if not query_arg or len(query_arg) < 1:
             print("Error: --query-arg <path> required for explain_module")
             return
         result = navigator.explain_module(query_arg[0])
+        evidence = [result.get('evidence')]
+        confidence = result.get('evidence', {}).get('confidence', 1.0)
     else:
         print(f"Unknown query tool: {query_tool}")
         return
+    # Log the query and result
+    trace_logger.log(
+        agent="Navigator",
+        action=query_tool,
+        input_data={'args': query_arg},
+        output_data=result,
+        evidence=evidence,
+        confidence=confidence
+    )
     # Print result as pretty JSON
     print(json.dumps(result, indent=2, ensure_ascii=False))

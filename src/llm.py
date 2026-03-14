@@ -37,6 +37,57 @@ class ContextWindowBudget:
         self.cumulative_tokens += self.estimate_tokens(text)
 
 class LLMClient:
+    def call_openrouter(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512) -> str:
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        base_url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
+        model_name = model or os.environ.get("OPENROUTER_MODEL", "upstage/solar-pro-3:free")
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens
+        }
+        try:
+            resp = requests.post(base_url, headers=headers, json=payload, timeout=30)
+            print(f"[LLM DEBUG] OpenRouter response status: {resp.status_code}")
+            print(f"[LLM DEBUG] OpenRouter response body: {resp.text[:500]}")
+            resp.raise_for_status()
+            data = resp.json()
+            if "choices" in data and data["choices"]:
+                return data["choices"][0]["message"]["content"]
+            return f"[OpenRouter error: No choices in response]"
+        except Exception as e:
+            print(f"[LLM DEBUG] OpenRouter failed: {e}")
+            return f"[OpenRouter error: {e}]"
+
+    def call_groq(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512) -> str:
+        api_key = os.environ.get("GROQ_API_KEY")
+        base_url = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
+        model_name = model or os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens
+        }
+        try:
+            resp = requests.post(base_url, headers=headers, json=payload, timeout=30)
+            print(f"[LLM DEBUG] Groq response status: {resp.status_code}")
+            print(f"[LLM DEBUG] Groq response body: {resp.text[:500]}")
+            resp.raise_for_status()
+            data = resp.json()
+            if "choices" in data and data["choices"]:
+                return data["choices"][0]["message"]["content"]
+            return f"[Groq error: No choices in response]"
+        except Exception as e:
+            print(f"[LLM DEBUG] Groq failed: {e}")
+            return f"[Groq error: {e}]"
     def __init__(self, ollama_url: Optional[str] = None, gemini_api_key: Optional[str] = None):
         self.ollama_url = ollama_url or os.environ.get("OLLAMA_URL", "http://localhost:11434")
         self.gemini_api_key = gemini_api_key or os.environ.get("GEMINI_API_KEY", "AIzaSyC5t_zEJJ3C_dY5V9Od2Z9Hholg84yZKiE")
@@ -62,15 +113,21 @@ class LLMClient:
                 "stream": False,
                 "options": {"num_predict": max_tokens}
             }
+            print(f"[LLM DEBUG] Calling Ollama at {url} with model '{m}'...")
             try:
                 resp = requests.post(url, json=payload, timeout=30)
+                print(f"[LLM DEBUG] Ollama response status: {resp.status_code}")
+                print(f"[LLM DEBUG] Ollama response body: {resp.text[:500]}")
                 resp.raise_for_status()
                 data = resp.json()
                 if "response" in data:
+                    print(f"[LLM DEBUG] Ollama returned response: {data['response'][:200]}")
                     return data["response"]
             except requests.exceptions.Timeout:
+                print(f"[LLM DEBUG] Ollama model '{m}' timed out.")
                 errors.append(f"Ollama model '{m}' timed out.")
             except Exception as e:
+                print(f"[LLM DEBUG] Ollama model '{m}' failed: {e}")
                 errors.append(f"Ollama model '{m}' failed: {e}")
             # Stop after first attempt for this model, do not retry
         return f"[Ollama error: All local LLMs failed or timed out. Details: {'; '.join(errors)}]"
@@ -96,30 +153,18 @@ class LLMClient:
         prompt = self._purpose_prompt(code, docstring)
         errors = []
 
-        # 1. Try Gemini once if conditions met
-        if prefer_fast and tokens < 6000 and self.gemini_api_key:
-            gemini_result = self.call_gemini(prompt, model="gemini-3-flash-preview", max_tokens=256)
-            if not gemini_result.startswith("[Gemini error"):
-                return gemini_result
-            errors.append(gemini_result)
-        # 2. Try each Ollama model only once, in order, and stop after first attempt for each
-        ollama_models = ["phi3:mini", "llama3.1:8b"]
-        for ollama_model in ollama_models:
-            ollama_result = self.call_ollama(prompt, model=ollama_model, max_tokens=256)
-            if not ollama_result.startswith("[Ollama error"):
-                return ollama_result
-            errors.append(ollama_result)
-        # Try the default model if it's not one of the above
-        default_model = self.ollama_default_model
-        if default_model not in ollama_models:
-            ollama_result3 = self.call_ollama(prompt, model=default_model, max_tokens=256)
-            if not ollama_result3.startswith("[Ollama error"):
-                return ollama_result3
-            errors.append(ollama_result3)
-        # 3. All models failed → return placeholder sentence
-        placeholder = "Unable to generate purpose statement due to LLM unavailability."
-        # Optionally log errors here if needed, but return only the placeholder
-        return placeholder
+        # 1. Try OpenRouter first
+        openrouter_result = self.call_openrouter(prompt, model=None, max_tokens=256)
+        if not openrouter_result.startswith("[OpenRouter error"):
+            return openrouter_result
+        errors.append(openrouter_result)
+        # 2. Fallback to Groq if OpenRouter fails
+        groq_result = self.call_groq(prompt, model=None, max_tokens=256)
+        if not groq_result.startswith("[Groq error"):
+            return groq_result
+        errors.append(groq_result)
+        # 3. If both fail, stop and return placeholder
+        return "Unable to generate purpose statement due to LLM unavailability (OpenRouter and Groq failed)."
 
     def _purpose_prompt(self, code: str, docstring: Optional[str]) -> str:
         prompt = (
