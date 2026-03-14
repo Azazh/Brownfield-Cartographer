@@ -135,43 +135,73 @@ class HydrologistAgent:
     def _process_python(self, file_path):
         operations = self.py_analyzer.analyze_file(file_path)
         for op in operations:
-            # op: {'type': 'pandas', 'operation': func, 'dataset': dataset}
-            dataset = op['dataset']
+            # op: {'type': 'pandas'|'spark'|'sqlalchemy', 'operation': func, 'dataset': dataset, 'direction': 'read'|'write', 'line_range': (start, end)}
+            dataset = op.get('dataset')
+            transformation_type = op.get('type', 'python')
+            direction = op.get('direction', None)
+            line_range = op.get('line_range', None)
             if dataset and isinstance(dataset, str) and not dataset.startswith('dynamic'):
-                # Treat as a node
                 self.lineage_graph.add_node(dataset, type='dataset')
-                # Optionally, we could infer an edge from something to dataset.
-                # For read operations, the dataset is a source. For write, it's a sink.
-                # We'll need to detect read vs write. For now, just record.
-                # We'll handle more precisely in final.
+                # Standardize edge metadata
+                edge_meta = {
+                    'transformation_type': transformation_type,
+                    'source_file': file_path,
+                    'line_range': line_range
+                }
+                # For reads, dataset is a source; for writes, dataset is a target
+                if direction == 'read':
+                    # Consumed by transformation
+                    self.lineage_graph.add_edge(dataset, f"{file_path}:{line_range}", **edge_meta)
+                elif direction == 'write':
+                    # Produced by transformation
+                    self.lineage_graph.add_edge(f"{file_path}:{line_range}", dataset, **edge_meta)
 
     def _process_sql(self, file_path):
+        # Support multiple dialects via sqlglot
+        dialect = self.sql_analyzer.dialect if hasattr(self.sql_analyzer, 'dialect') else 'duckdb'
         lineage = self.sql_analyzer.extract_lineage(file_path)
-        target = lineage['target']
-        sources = lineage['sources']
+        target = lineage.get('target')
+        sources = lineage.get('sources', [])
+        line_range = lineage.get('line_range', None)
         if target:
             self.lineage_graph.add_node(target, type='dataset')
         for src in sources:
             self.lineage_graph.add_node(src, type='dataset')
-            self.lineage_graph.add_edge(src, target,
-                                        type='sql',
-                                        source_file=file_path)
+            edge_meta = {
+                'transformation_type': f'sql_{dialect}',
+                'source_file': file_path,
+                'line_range': line_range
+            }
+            self.lineage_graph.add_edge(src, target, **edge_meta)
 
     def _process_yaml(self, file_path):
-        # For interim, we might just log
         edges = self.yaml_analyzer.extract_lineage(file_path)
-        for src, tgt in edges:
+        for src, tgt, meta in edges:
             self.lineage_graph.add_node(src, type='dataset')
             self.lineage_graph.add_node(tgt, type='dataset')
-            self.lineage_graph.add_edge(src, tgt,
-                                        type='dbt_yaml',
-                                        source_file=file_path)
+            edge_meta = {
+                'transformation_type': meta.get('transformation_type', 'dbt_yaml') if meta else 'dbt_yaml',
+                'source_file': file_path,
+                'line_range': meta.get('line_range') if meta else None
+            }
+            self.lineage_graph.add_edge(src, tgt, **edge_meta)
 
     def blast_radius(self, node):
-        return self.lineage_graph.blast_radius(node)
+        # Return downstream nodes with edge metadata
+        nodes = self.lineage_graph.blast_radius(node)
+        results = []
+        for n in nodes:
+            for succ in self.lineage_graph.graph.successors(n):
+                edge_data = self.lineage_graph.graph.get_edge_data(n, succ)
+                results.append({'from': n, 'to': succ, 'edge': edge_data})
+        return results
 
     def find_sources(self):
-        return self.lineage_graph.find_sources()
+        # Return source nodes with metadata
+        sources = self.lineage_graph.find_sources()
+        return [{'node': n, 'metadata': self.lineage_graph.graph.nodes[n]} for n in sources]
 
     def find_sinks(self):
-        return self.lineage_graph.find_sinks()
+        # Return sink nodes with metadata
+        sinks = self.lineage_graph.find_sinks()
+        return [{'node': n, 'metadata': self.lineage_graph.graph.nodes[n]} for n in sinks]

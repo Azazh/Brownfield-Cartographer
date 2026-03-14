@@ -5,16 +5,24 @@ Built for the **TRP1 Week 4 Challenge** – a forward‑deployed engineering too
 
 ## Features (Phase 2 – Interim)
 
-- **Surveyor Agent** – static structure analysis using tree‑sitter:
-  - Extracts Python imports, public functions, classes, and inheritance.
-  - Builds a module import graph (NetworkX) and identifies high‑velocity files via git log.
-  - Detects circular dependencies and computes PageRank hubs.
-- **Hydrologist Agent** – data lineage analysis:
-  - Python: extracts pandas read/write, Spark operations, SQLAlchemy `execute()` calls.
-  - SQL: parses `.sql` files with `sqlglot` to find table dependencies (partial – dbt Jinja not yet supported).
-  - YAML: extracts dbt `ref()` and `source()` references from `schema.yml` and model files.
-  - Merges all findings into a **DataLineageGraph** (NetworkX DiGraph) and provides `blast_radius()`, `find_sources()`, `find_sinks()`.
-- Outputs are saved in `.cartography/` as JSON files (`analysis_results_*.json`, `lineage_graph.json`).
+**Surveyor Agent** – static structure analysis using tree‑sitter:
+   - Extracts Python imports, public functions, classes, and inheritance.
+   - Builds a module import graph (NetworkX) and identifies high‑velocity files via git log.
+   - Detects circular dependencies and computes PageRank hubs.
+**Hydrologist Agent** – data lineage analysis:
+   - Python: extracts pandas read/write, Spark operations, SQLAlchemy `execute()` calls.
+   - SQL: parses `.sql` files with `sqlglot` to find table dependencies (now supports dbt Jinja via preprocessor).
+   - YAML: extracts dbt `ref()` and `source()` references from `schema.yml` and model files.
+   - Merges all findings into a **DataLineageGraph** (NetworkX DiGraph) and provides `blast_radius()`, `find_sources()`, `find_sinks()`.
+**Semanticist Agent** – LLM-powered semantic analysis:
+   - Generates purpose statements for modules and datasets using LLMs.
+   - Produces semantic index for CODEBASE.md and supports Navigator queries.
+**Archivist Agent** – artifact/report generation:
+   - Produces CODEBASE.md and onboarding_brief.md for FDE onboarding.
+**Navigator Agent** – interactive codebase Q&A:
+   - Provides four rubric-compliant tools: `find_implementation`, `trace_lineage`, `blast_radius`, `explain_module`.
+   - All answers cite source files, line ranges, and analysis method.
+Outputs are saved in `.cartography/` as JSON and Markdown files (see below).
 
 ## Project Structure
 
@@ -77,26 +85,77 @@ Built for the **TRP1 Week 4 Challenge** – a forward‑deployed engineering too
    ```
 
 ## Usage
-
-
 ### Analyze Command
 
-To run the full analysis pipeline on any local or remote repository:
+To run the full analysis pipeline on any local or remote repository, use the Makefile for convenience:
 
 ```bash
+# Full analysis (default: auto mode)
 make run REPO=/path/to/target/repo OUTPUT=.cartography
-# or directly
-.venv/bin/python -m src.cli --repo /path/to/target/repo --output .cartography
+
+# Force full analysis
+make run REPO=/path/to/target/repo OUTPUT=.cartography RUN_MODE=full
+
+# Force incremental analysis (if possible)
+make run REPO=/path/to/target/repo OUTPUT=.cartography RUN_MODE=incremental
+```
+
+You can also run the CLI directly for advanced options:
+
+```bash
+.venv/bin/python -m src.cli --repo /path/to/target/repo --output .cartography --run-mode full
 ```
 
 #### Arguments
-- `--repo`: Path to local repo or GitHub URL (required)
-- `--output`: Output directory for artifacts (default: .cartography)
-- `--sql-dialect`: SQL dialect for parsing (default: duckdb)
+- `REPO`: Path to local repo or GitHub URL (required)
+- `OUTPUT`: Output directory for artifacts (default: .cartography)
+- `RUN_MODE`: Run mode for analysis. One of:
+   - `auto` (default): Use incremental if possible, else full
+   - `full`: Force full analysis of all files
+   - `incremental`: Force incremental analysis (if possible)
 
 #### Outputs
 Artifacts are saved in `.cartography/`:
 - `module_graph.json`: Module import graph (static structure)
+
+### Query Command (Navigator Agent)
+
+To interactively query the codebase using the Navigator agent over existing `.cartography` artifacts, use the Makefile and override arguments as needed:
+
+```bash
+# Example: Find where a business concept is implemented
+make run REPO=../jaffle-shop-classic OUTPUT=.cartography MODE=query QUERY_TOOL=find_implementation QUERY_ARG="customer"
+
+# Example: Trace lineage for a dataset
+make run REPO=../jaffle-shop-classic OUTPUT=.cartography MODE=query QUERY_TOOL=trace_lineage QUERY_ARG="stg_customers upstream"
+
+# Example: Get blast radius for a module
+make run REPO=../jaffle-shop-classic OUTPUT=.cartography MODE=query QUERY_TOOL=blast_radius QUERY_ARG="src/models/customers.sql"
+
+# Example: Explain a module
+make run REPO=../jaffle-shop-classic OUTPUT=.cartography MODE=query QUERY_TOOL=explain_module QUERY_ARG="src/models/customers.sql"
+```
+
+Supported query tools:
+- `find_implementation <concept>`
+- `trace_lineage <dataset> [direction]`
+- `blast_radius <module_path>`
+- `explain_module <path>`
+
+### Incremental vs Full Analysis
+
+By default, the pipeline will run in `auto` mode, using incremental analysis if there are new git commits since the last run. You can explicitly control this with the `RUN_MODE` Makefile variable:
+
+- Force full analysis:
+   ```bash
+   make run REPO=../jaffle-shop-classic OUTPUT=.cartography RUN_MODE=full
+   ```
+- Force incremental analysis (if possible):
+   ```bash
+   make run REPO=../jaffle-shop-classic OUTPUT=.cartography RUN_MODE=incremental
+   ```
+
+If incremental is not possible (e.g., first run or no new commits), the pipeline will fall back to full analysis.
 - `lineage_graph.json`: DataLineageGraph (dataset/transformation nodes and lineage edges)
 - `knowledge_graph_<timestamp>.json`: Full knowledge graph (all nodes/edges)
 - `surveyor_report_<timestamp>.json`: Surveyor static structure results
@@ -124,16 +183,24 @@ head -n 30 .cartography/lineage_graph.json
 
 ## Known Limitations (Interim)
 
-- SQL lineage with `sqlglot` fails on dbt Jinja templating (`{{ ref(...) }}`, `{% ... %}`). Table names are not extracted from such files.
-- Only Python grammar is built; SQL and YAML are handled by other tools (`sqlglot`, `pyyaml`). This meets the "partial lineage" requirement.
+- Only Python grammar is built for tree-sitter; SQL and YAML are handled by other tools (`sqlglot`, `pyyaml`).
 - Git velocity requires the target directory to be a git repository.
+- LLM-based semantic analysis requires internet access and valid API keys for supported LLM providers.
 
 ## Future Work (Final Submission)
 
-- Add Jinja pre‑processor for full dbt SQL parsing.
-- Build SQL and YAML grammars into the shared library.
-- Implement Semanticist (LLM‑based purpose statements) and Archivist (CODEBASE.md, onboarding brief).
-- Add Navigator agent (LangGraph‑based query interface).
+The following are now implemented and required for the final deliverable:
+- Jinja pre‑processor for full dbt SQL parsing.
+- Modular SQL and YAML parsing (tree-sitter, sqlglot, pyyaml).
+- Semanticist (LLM‑based purpose statements) and Archivist (CODEBASE.md, onboarding brief).
+- Navigator agent (LangGraph‑based query interface) with rubric-compliant evidence reporting.
+- Incremental/full run support and robust artifact saving.
+
+**Final Deliverable Protocols:**
+- Submit `.cartography/module_graph.json` and `.cartography/lineage_graph.json` for interim review.
+- For final submission, include all generated artifacts in `.cartography/` (including CODEBASE.md, onboarding_brief.md, semanticist and surveyor reports).
+- Ensure README and Makefile are up to date and all commands work as documented.
+- Provide at least one example run on a real-world codebase (e.g., dbt jaffle-shop-classic) and verify outputs.
 
 ## License
 

@@ -28,6 +28,8 @@ class DbtYamlAnalyzer:
         # Look for 'models' section
         models = data.get('models', [])
         for model in models:
+            if not isinstance(model, dict):
+                continue
             model_name = model.get('name')
             if not model_name:
                 continue
@@ -37,6 +39,8 @@ class DbtYamlAnalyzer:
             # For now, we'll use YAML only to register source tables.
             sources_section = model.get('sources', [])
             for src in sources_section:
+                if not isinstance(src, dict):
+                    continue
                 source_name = src.get('name')
                 if source_name:
                     edges.append((source_name, model_name))  # source -> model
@@ -44,9 +48,13 @@ class DbtYamlAnalyzer:
         # Also look for 'sources' top-level
         sources_top = data.get('sources', [])
         for src in sources_top:
+            if not isinstance(src, dict):
+                continue
             src_name = src.get('name')
             tables = src.get('tables', [])
             for tbl in tables:
+                if not isinstance(tbl, dict):
+                    continue
                 table_name = tbl.get('name')
                 if src_name and table_name:
                     # This defines a source table, but not an edge yet.

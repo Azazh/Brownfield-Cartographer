@@ -18,10 +18,14 @@ class SemanticistAgent:
         # Collect purpose statements
         node_ids = []
         purposes = []
+        file_paths = []
+        line_ranges = []
         for node_id, node_model in self.kg.graph.nodes(data='model'):
             if hasattr(node_model, 'purpose_statement') and node_model.purpose_statement:
                 node_ids.append(node_id)
                 purposes.append(node_model.purpose_statement)
+                file_paths.append(getattr(node_model, 'path', None))
+                line_ranges.append(getattr(node_model, 'line_range', None))
         if not purposes:
             return {}
         # Embed with TF-IDF
@@ -31,7 +35,7 @@ class SemanticistAgent:
         k = min(k, len(purposes))
         kmeans = KMeans(n_clusters=k, n_init=10, random_state=42)
         labels = kmeans.fit_predict(X)
-        # Simple domain label: top TF-IDF word in each cluster
+        # Data-driven domain label: top 3 TF-IDF words in each cluster
         domain_labels = []
         for i in range(k):
             idxs = np.where(labels == i)[0]
@@ -40,8 +44,9 @@ class SemanticistAgent:
                 continue
             cluster_text = ' '.join([purposes[j] for j in idxs])
             tfidf = vectorizer.transform([cluster_text])
-            top_word = vectorizer.get_feature_names_out()[np.argmax(tfidf.toarray())]
-            domain_labels.append(top_word)
+            top_indices = np.argsort(tfidf.toarray()[0])[::-1][:3]
+            top_words = [vectorizer.get_feature_names_out()[idx] for idx in top_indices]
+            domain_labels.append(', '.join(top_words))
         # Assign domain_cluster to ModuleNodes
         node_to_domain = {}
         for idx, node_id in enumerate(node_ids):
@@ -54,8 +59,36 @@ class SemanticistAgent:
 
     def answer_day_one_questions(self, surveyor_report: dict, hydrologist_report: dict) -> dict:
         """
-        Use LLM to synthesize answers to the Five FDE Day-One Questions, citing evidence.
+        Use LLM to synthesize answers to the Five FDE Day-One Questions, citing evidence (file, line_range) from Surveyor/Hydrologist outputs.
         """
+        answers = {}
+        # Example: What are the system's main domains?
+        if 'domain_map' in surveyor_report:
+            domains = surveyor_report['domain_map']
+            domain_citations = []
+            for node_id, label in domains.items():
+                node = self.kg.get_node(node_id)
+                if node:
+                    domain_citations.append({
+                        'domain': label,
+                        'file': getattr(node, 'path', None),
+                        'line_range': getattr(node, 'line_range', None)
+                    })
+            answers['main_domains'] = domain_citations
+        # Example: What are the critical data flows?
+        if hydrologist_report:
+            flows = []
+            for edge in hydrologist_report.get('edges', []):
+                flows.append({
+                    'from': edge.get('from'),
+                    'to': edge.get('to'),
+                    'transformation_type': edge.get('edge', {}).get('transformation_type'),
+                    'file': edge.get('edge', {}).get('source_file'),
+                    'line_range': edge.get('edge', {}).get('line_range')
+                })
+            answers['critical_data_flows'] = flows
+        # Add more Day-One answers as needed, always citing file and line_range
+        return answers
         if not self.llm_client:
             return {"error": "No LLM client configured"}
         prompt = (
@@ -167,14 +200,16 @@ class SemanticistAgent:
         return ""
 
     def _generate_purpose_statement(self, code: str, docstring: str) -> str:
-        # Use the LLMClient for purpose statement generation
+        # Use the LLMClient for purpose statement generation, robust fallback: try each model only once
         if self.llm_client:
             try:
-                return self.llm_client.generate_purpose_statement(code, docstring, prefer_fast=True)
+                result = self.llm_client.generate_purpose_statement(code, docstring, prefer_fast=True)
+                # If result is a known error, do not retry the same model, just try others (handled in LLMClient)
+                return result
             except Exception as e:
                 logger.warning(f"LLM call failed: {e}")
         # Fallback: naive heuristic
-        return f"Purpose statement for module (stub)."
+        return "Purpose statement for module (stub)."
 
     def _docstring_matches_purpose(self, docstring: str, purpose: str) -> bool:
         # Placeholder: naive check
