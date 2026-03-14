@@ -43,13 +43,12 @@ class ContextWindowBudget:
         return {'cumulative_tokens': self.cumulative_tokens, 'calls': self.token_log}
 
 class LLMClient:
-    def call_openrouter(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512, messages: Optional[list] = None, reasoning: bool = False) -> dict:
+    def call_openrouter(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512, messages: Optional[list] = None, reasoning: bool = False) -> str:
         """
-        Call OpenRouter API. If messages is None, use single prompt. If reasoning is True, enable reasoning in payload.
-        Returns a dict with at least 'content' and optionally 'reasoning_details'.
+        Call OpenRouter API using requests. Uses .env for API key and model. Returns string content for agent compatibility.
         """
         api_key = os.environ.get("OPENROUTER_API_KEY")
-        base_url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
+        url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
         model_name = model or os.environ.get("OPENROUTER_MODEL", "openrouter/free")
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -57,31 +56,30 @@ class LLMClient:
         }
         if messages is None:
             messages = [{"role": "user", "content": prompt}]
-        payload = {
+        data = {
             "model": model_name,
             "messages": messages,
             "max_tokens": max_tokens
         }
         if reasoning:
-            payload["reasoning"] = {"enabled": True}
+            data["reasoning"] = {"enabled": True}
         try:
-            resp = requests.post(base_url, headers=headers, data=json.dumps(payload), timeout=30)
+            resp = requests.post(url, headers=headers, json=data, timeout=30)
             print(f"[LLM DEBUG] OpenRouter response status: {resp.status_code}")
             print(f"[LLM DEBUG] OpenRouter response body: {resp.text[:500]}")
             resp.raise_for_status()
-            data = resp.json()
-            if not isinstance(data, dict):
-                return {"content": "[OpenRouter error: Malformed response]"}
-            if "choices" in data and data["choices"]:
-                message = data["choices"][0]["message"]
-                result = {"content": message.get("content")}
-                if "reasoning_details" in message:
-                    result["reasoning_details"] = message["reasoning_details"]
-                return result
-            return {"content": f"[OpenRouter error: No choices in response]"}
+            result = resp.json()
+            if "choices" in result and result["choices"]:
+                message = result["choices"][0]["message"]
+                content = message.get("content")
+                if content is not None:
+                    return content
+                print(f"[LLM DEBUG] OpenRouter missing content: {result}")
+                return "[OpenRouter error: No content in response]"
+            return f"[OpenRouter error: No choices in response]"
         except Exception as e:
             print(f"[LLM DEBUG] OpenRouter failed: {e}")
-            return {"content": f"[OpenRouter error: {e}]"}
+            return f"[OpenRouter error: {e}]"
 
     def call_groq(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512) -> str:
         api_key = os.environ.get("GROQ_API_KEY")

@@ -14,6 +14,8 @@ import ast
 
 class PythonDataFlowAnalyzer:
     def analyze_file(self, file_path):
+        import ast, logging
+        logger = logging.getLogger(__name__)
         operations = []
         with open(file_path, "r", encoding="utf-8") as f:
             try:
@@ -21,24 +23,77 @@ class PythonDataFlowAnalyzer:
             except Exception:
                 return operations
         for node in ast.walk(tree):
-            # Detect pandas.read_csv
+            # Pandas read_csv/read_sql
             if (
                 isinstance(node, ast.Call)
                 and hasattr(node.func, 'attr')
-                and node.func.attr == 'read_csv'
+                and node.func.attr in ('read_csv', 'read_sql')
             ):
+                op_type = 'pandas'
+                op_name = node.func.attr
+                dataset = None
                 for arg in node.args:
                     if isinstance(arg, ast.Str):
-                        operations.append({'type': 'pandas', 'operation': 'read_csv', 'dataset': arg.s})
-            # Detect pandas.DataFrame.to_csv
+                        dataset = arg.s
+                    elif isinstance(arg, ast.JoinedStr):
+                        logger.warning(f"[Lineage] Unresolved dynamic reference in {file_path}: f-string in {op_name}")
+                        dataset = 'dynamic_reference'
+                if dataset:
+                    operations.append({'type': op_type, 'operation': op_name, 'dataset': dataset, 'direction': 'read', 'line_range': (getattr(node, 'lineno', None), getattr(node, 'end_lineno', None))})
+            # Pandas to_csv/to_sql
             if (
                 isinstance(node, ast.Call)
                 and hasattr(node.func, 'attr')
-                and node.func.attr == 'to_csv'
+                and node.func.attr in ('to_csv', 'to_sql')
             ):
+                op_type = 'pandas'
+                op_name = node.func.attr
+                dataset = None
                 for arg in node.args:
                     if isinstance(arg, ast.Str):
-                        operations.append({'type': 'pandas', 'operation': 'to_csv', 'dataset': arg.s})
+                        dataset = arg.s
+                    elif isinstance(arg, ast.JoinedStr):
+                        logger.warning(f"[Lineage] Unresolved dynamic reference in {file_path}: f-string in {op_name}")
+                        dataset = 'dynamic_reference'
+                if dataset:
+                    operations.append({'type': op_type, 'operation': op_name, 'dataset': dataset, 'direction': 'write', 'line_range': (getattr(node, 'lineno', None), getattr(node, 'end_lineno', None))})
+            # SQLAlchemy engine.execute
+            if (
+                isinstance(node, ast.Call)
+                and hasattr(node.func, 'attr')
+                and node.func.attr == 'execute'
+            ):
+                op_type = 'sqlalchemy'
+                op_name = 'execute'
+                dataset = None
+                for arg in node.args:
+                    if isinstance(arg, ast.Str):
+                        dataset = arg.s
+                    elif isinstance(arg, ast.JoinedStr):
+                        logger.warning(f"[Lineage] Unresolved dynamic reference in {file_path}: f-string in SQLAlchemy execute")
+                        dataset = 'dynamic_reference'
+                if dataset:
+                    operations.append({'type': op_type, 'operation': op_name, 'dataset': dataset, 'direction': 'read', 'line_range': (getattr(node, 'lineno', None), getattr(node, 'end_lineno', None))})
+            # PySpark read/write
+            if (
+                isinstance(node, ast.Call)
+                and hasattr(node.func, 'attr')
+                and node.func.attr in ('csv', 'parquet', 'json')
+            ):
+                parent = getattr(node.func, 'value', None)
+                if parent and hasattr(parent, 'attr') and parent.attr in ('read', 'write'):
+                    op_type = 'spark'
+                    op_name = f"{parent.attr}_{node.func.attr}"
+                    direction = 'read' if parent.attr == 'read' else 'write'
+                    dataset = None
+                    for arg in node.args:
+                        if isinstance(arg, ast.Str):
+                            dataset = arg.s
+                        elif isinstance(arg, ast.JoinedStr):
+                            logger.warning(f"[Lineage] Unresolved dynamic reference in {file_path}: f-string in PySpark {op_name}")
+                            dataset = 'dynamic_reference'
+                    if dataset:
+                        operations.append({'type': op_type, 'operation': op_name, 'dataset': dataset, 'direction': direction, 'line_range': (getattr(node, 'lineno', None), getattr(node, 'end_lineno', None))})
         return operations
 
 class DataLineageGraph:
@@ -82,12 +137,15 @@ class DataLineageGraph:
 
 class HydrologistAgent:
     def __init__(self, knowledge_graph=None, sql_dialect='duckdb', trace_logger=None):
+        import logging
         self.kg = knowledge_graph
         self.py_analyzer = PythonDataFlowAnalyzer()
         self.sql_analyzer = SQLLineageAnalyzer(dialect=sql_dialect)
         self.yaml_analyzer = DbtYamlAnalyzer()
         self.lineage_graph = DataLineageGraph()
         self.trace_logger = trace_logger
+        self.logger = logging.getLogger(__name__)
+        self.sql_dialect = sql_dialect
 
     def analyze_repo(self, repo_path, changed_files=None, added_files=None, deleted_files=None):
         """
@@ -157,22 +215,29 @@ class HydrologistAgent:
                     self.lineage_graph.add_edge(f"{file_path}:{line_range}", dataset, **edge_meta)
 
     def _process_sql(self, file_path):
-        # Support multiple dialects via sqlglot
-        dialect = self.sql_analyzer.dialect if hasattr(self.sql_analyzer, 'dialect') else 'duckdb'
-        lineage = self.sql_analyzer.extract_lineage(file_path)
+        # Support multiple dialects via sqlglot, auto-detect if possible
+        dialect = self.sql_analyzer.dialect if hasattr(self.sql_analyzer, 'dialect') else self.sql_dialect
+        try:
+            lineage = self.sql_analyzer.extract_lineage(file_path)
+        except Exception as e:
+            self.logger.warning(f"[Lineage] SQL parsing failed for {file_path}: {e}")
+            return
         target = lineage.get('target')
         sources = lineage.get('sources', [])
         line_range = lineage.get('line_range', None)
+        used_dialect = lineage.get('dialect', dialect)
         if target:
             self.lineage_graph.add_node(target, type='dataset')
         for src in sources:
             self.lineage_graph.add_node(src, type='dataset')
             edge_meta = {
-                'transformation_type': f'sql_{dialect}',
+                'transformation_type': f'sql_{used_dialect}',
                 'source_file': file_path,
                 'line_range': line_range
             }
             self.lineage_graph.add_edge(src, target, **edge_meta)
+        if not sources or not target:
+            self.logger.warning(f"[Lineage] Unresolved SQL lineage in {file_path}: sources={sources}, target={target}")
 
     def _process_yaml(self, file_path):
         edges = self.yaml_analyzer.extract_lineage(file_path)
