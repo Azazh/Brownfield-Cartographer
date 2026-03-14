@@ -39,6 +39,8 @@ def main():
                         help='SQL dialect for parsing (e.g., duckdb, postgres, bigquery, snowflake). Default: duckdb')
     parser.add_argument('--mode', type=str, default='analyze', choices=['analyze', 'query'],
                         help='Mode: analyze (default) or query (Navigator agent)')
+    parser.add_argument('--run-mode', type=str, default='auto', choices=['auto', 'full', 'incremental'],
+                        help='Run mode: auto (default, infer from git), full (force full analysis), incremental (force incremental if possible)')
     parser.add_argument('--query-tool', type=str, default=None,
                         help='Navigator tool to use: find_implementation, trace_lineage, blast_radius, explain_module')
     parser.add_argument('--query-arg', type=str, nargs='*', default=None,
@@ -48,6 +50,7 @@ def main():
     output_dir = args.output
     sql_dialect = args.sql_dialect
     mode = args.mode
+    run_mode = args.run_mode
     temp_dir = None
     if repo_path.startswith(('http://', 'https://', 'git@')):
         logger.info("Detected remote repository URL – cloning...")
@@ -56,7 +59,8 @@ def main():
 
     try:
         if mode == 'analyze':
-            run_analysis(repo_path, output_dir, sql_dialect=sql_dialect)
+            from src.orchestrator import run_analysis
+            run_analysis(repo_path, output_dir, sql_dialect=sql_dialect, run_mode=run_mode)
         elif mode == 'query':
             from src.orchestrator import run_query
             run_query(repo_path, output_dir, args.query_tool, args.query_arg)

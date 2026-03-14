@@ -18,6 +18,17 @@ LANGUAGES = {
 }
 
 class TreeSitterAnalyzer:
+    def _strip_jinja(self, code: str) -> str:
+        """
+        Remove Jinja/DBT templating blocks from SQL code for static analysis.
+        Strips both {% ... %} and {{ ... }} blocks.
+        """
+        import re
+        # Remove {% ... %} blocks
+        code = re.sub(r'{%.*?%}', '', code, flags=re.DOTALL)
+        # Remove {{ ... }} blocks
+        code = re.sub(r'{{.*?}}', '', code, flags=re.DOTALL)
+        return code
 
     """
     Multi-language AST analyzer for Python, SQL, and YAML using tree-sitter.
@@ -35,6 +46,8 @@ class TreeSitterAnalyzer:
         Analyze code for the given language and return a structured dict of extracted features.
         Supports: python, sql, yaml.
         """
+        if lang == 'sql':
+            code = self._strip_jinja(code)
         parser = self.parsers[lang]
         tree = parser.parse(code.encode('utf8'))
         root = tree.root_node
@@ -99,7 +112,16 @@ class TreeSitterAnalyzer:
         # Example: extract table names, star selects, etc.
         tables = set()
         star_selects = False
-        for node in root.walk():
+        def traverse(cursor):
+            # Recursively yield all nodes in the tree
+            stack = [cursor.node]
+            while stack:
+                node = stack.pop()
+                yield node
+                for i in reversed(range(node.child_count)):
+                    stack.append(node.child(i))
+        cursor = root.walk()
+        for node in traverse(cursor):
             if node.type == 'table_reference':
                 tables.add(code[node.start_byte:node.end_byte])
             if node.type == 'select_clause':
