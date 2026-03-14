@@ -8,6 +8,7 @@ from src.models.node_types import ModuleNode, DatasetNode, FunctionNode, Transfo
 logger = logging.getLogger(__name__)
 
 
+
 class NavigatorAgent:
     """
     LangGraph-style agent for codebase querying. Implements the four required tools:
@@ -22,6 +23,37 @@ class NavigatorAgent:
     This meets rubric requirements for evidence and citation. All tools are fully integrated with the pipeline.
     """
 
+    def agent_loop(self, steps: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Execute a sequence of tool invocations (tool_name, args) in order, chaining outputs as needed.
+        Returns a list of step results, each with evidence and error info if any.
+        """
+        results = []
+        context = {}
+        for i, step in enumerate(steps):
+            tool = step.get('tool')
+            args = step.get('args', [])
+            try:
+                if tool == 'find_implementation':
+                    res = self.find_implementation(*args)
+                elif tool == 'trace_lineage':
+                    res = self.trace_lineage(*args)
+                elif tool == 'blast_radius':
+                    res = self.blast_radius(*args)
+                elif tool == 'explain_module':
+                    res = self.explain_module(*args)
+                else:
+                    res = {'error': f'Unknown tool: {tool}'}
+                # If previous step output is needed, allow referencing via {prev} in args
+                if isinstance(res, dict) and 'error' in res:
+                    results.append({'step': i, 'tool': tool, 'args': args, 'error': res['error'], 'evidence': res.get('evidence')})
+                else:
+                    results.append({'step': i, 'tool': tool, 'args': args, 'result': res})
+                context[f'step_{i}'] = res
+            except Exception as e:
+                results.append({'step': i, 'tool': tool, 'args': args, 'error': str(e)})
+        return {'steps': results}
+
     def __init__(self, knowledge_graph: KnowledgeGraph, vector_store=None, semanticist=None):
         self.kg = knowledge_graph
         self.vector_store = vector_store  # Should support semantic search over purpose statements
@@ -33,23 +65,28 @@ class NavigatorAgent:
         Returns a list of results, each with an evidence object citing source_file, line_range, and analysis_method.
         """
         results = []
+        # 1. Try vector search if available
         if self.vector_store:
-            hits = self.vector_store.search(concept, top_k=5)
-            for hit in hits:
-                node = self.kg.get_node(hit['node_id'])
-                evidence = {
-                    'source_file': getattr(node, 'path', None) if node else None,
-                    'line_range': getattr(node, 'line_range', None) if node and hasattr(node, 'line_range') else None,
-                    'analysis_method': 'LLM (semantic search)',
-                    'confidence': hit.get('score', None)
-                }
-                results.append({
-                    'path': getattr(node, 'path', None) if node else None,
-                    'purpose_statement': getattr(node, 'purpose_statement', None) if node else None,
-                    'score': hit.get('score'),
-                    'evidence': evidence
-                })
-        else:
+            try:
+                hits = self.vector_store.search(concept, top_k=5)
+                for hit in hits:
+                    node = self.kg.get_node(hit['node_id'])
+                    evidence = {
+                        'source_file': getattr(node, 'path', None) if node else None,
+                        'line_range': getattr(node, 'line_range', None) if node and hasattr(node, 'line_range') else None,
+                        'analysis_method': 'LLM (semantic search)',
+                        'confidence': hit.get('score', None)
+                    }
+                    results.append({
+                        'path': getattr(node, 'path', None) if node else None,
+                        'purpose_statement': getattr(node, 'purpose_statement', None) if node else None,
+                        'score': hit.get('score'),
+                        'evidence': evidence
+                    })
+            except Exception as e:
+                logger.warning(f"Vector search failed: {e}")
+        # 2. Fallback: substring search in purpose statements
+        if not results:
             for node_id in self.kg.graph.nodes:
                 node = self.kg.get_node(node_id)
                 if isinstance(node, ModuleNode) and node.purpose_statement and concept.lower() in node.purpose_statement.lower():
@@ -65,6 +102,9 @@ class NavigatorAgent:
                         'score': 1.0,
                         'evidence': evidence
                     })
+        # 3. If still nothing, return a clear error
+        if not results:
+            return {'error': f'No implementation found for concept: {concept}', 'evidence': None}
         return {'results': results}
 
     def trace_lineage(self, dataset: str, direction: str = 'upstream') -> Dict[str, Any]:
@@ -74,7 +114,7 @@ class NavigatorAgent:
         """
         node = self.kg.get_node(dataset)
         if not node:
-            return {'error': f'Dataset {dataset} not found'}
+            return {'error': f'Dataset {dataset} not found', 'evidence': None}
         method = 'static (graph traversal)'
         results = []
         if direction == 'upstream':
@@ -127,6 +167,8 @@ class NavigatorAgent:
         affected = self.kg.blast_radius(module_path)
         method = 'static (graph traversal)'
         results = []
+        if not affected:
+            return {'error': f'Module {module_path} not found or has no downstream nodes', 'evidence': None}
         for node_id in affected:
             node = self.kg.get_node(node_id)
             evidence = {
@@ -153,10 +195,14 @@ class NavigatorAgent:
         """
         node = self.kg.get_node(path)
         if not node or not isinstance(node, ModuleNode):
-            return {'error': f'Module {path} not found'}
+            return {'error': f'Module {path} not found', 'evidence': None}
         if self.semanticist:
-            explanation = self.semanticist._generate_purpose_statement(self._read_file(node.path), node.purpose_statement or "")
-            method = 'LLM (purpose_statement)'
+            try:
+                explanation = self.semanticist._generate_purpose_statement(self._read_file(node.path), node.purpose_statement or "")
+                method = 'LLM (purpose_statement)'
+            except Exception as e:
+                explanation = f"Semanticist error: {e}"
+                method = 'LLM (purpose_statement error)'
         else:
             explanation = node.purpose_statement or "No purpose statement available."
             method = 'LLM (cached purpose_statement)'

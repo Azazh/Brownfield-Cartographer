@@ -233,19 +233,40 @@ def run_query(repo_path: str, output_dir: str, query_tool: str, query_arg: list)
     trace_log_path = os.path.join(output_dir, 'cartography_trace.jsonl')
     trace_logger = TraceLogger(trace_log_path)
 
-    # Dispatch query and log
+    # Support agent loop (tool chaining) if requested
     result = None
     evidence = None
     confidence = None
-    if query_tool == 'find_implementation':
+    if query_tool == 'agent_loop':
+        # query_arg should be a list of step dicts: [{tool: ..., args: [...]}, ...]
+        if not query_arg or not isinstance(query_arg, list) or not all(isinstance(step, dict) for step in query_arg):
+            print("Error: --query-arg must be a list of step dicts for agent_loop")
+            return
+        result = navigator.agent_loop(query_arg)
+        # Aggregate evidence and confidence from all steps
+        evidence = []
+        confidence = []
+        for step in result.get('steps', []):
+            if 'result' in step and isinstance(step['result'], dict):
+                # Try to extract evidence/confidence from each tool result
+                if 'evidence' in step['result']:
+                    evidence.append(step['result']['evidence'])
+                    conf = step['result']['evidence'].get('confidence', 1.0)
+                    confidence.append(conf)
+            elif 'error' in step:
+                evidence.append({'error': step['error']})
+        confidence = max(confidence) if confidence else None
+    elif query_tool == 'find_implementation':
         if not query_arg or len(query_arg) < 1:
             print("Error: --query-arg <concept> required for find_implementation")
             return
         result = navigator.find_implementation(query_arg[0])
-        # Evidence: list of evidence objects from results
-        evidence = [r.get('evidence') for r in result.get('results', [])]
-        # Confidence: max score if available
-        confidence = max([e.get('confidence', 0) for e in evidence if e], default=None)
+        if 'error' in result:
+            evidence = [{'error': result['error']}]
+            confidence = None
+        else:
+            evidence = [r.get('evidence') for r in result.get('results', [])]
+            confidence = max([e.get('confidence', 0) for e in evidence if e], default=None)
     elif query_tool == 'trace_lineage':
         if not query_arg or len(query_arg) < 1:
             print("Error: --query-arg <dataset> [direction] required for trace_lineage")
@@ -253,24 +274,35 @@ def run_query(repo_path: str, output_dir: str, query_tool: str, query_arg: list)
         dataset = query_arg[0]
         direction = query_arg[1] if len(query_arg) > 1 else 'upstream'
         result = navigator.trace_lineage(dataset, direction)
-        # Evidence: list of evidence objects from results
-        key = 'upstream' if direction == 'upstream' else 'downstream'
-        evidence = [r.get('evidence') for r in result.get(key, [])]
-        confidence = 1.0
+        if 'error' in result:
+            evidence = [{'error': result['error']}]
+            confidence = None
+        else:
+            key = 'upstream' if direction == 'upstream' else 'downstream'
+            evidence = [r.get('evidence') for r in result.get(key, [])]
+            confidence = 1.0
     elif query_tool == 'blast_radius':
         if not query_arg or len(query_arg) < 1:
             print("Error: --query-arg <module_path> required for blast_radius")
             return
         result = navigator.blast_radius(query_arg[0])
-        evidence = [r.get('evidence') for r in result.get('affected_nodes', [])]
-        confidence = 1.0
+        if 'error' in result:
+            evidence = [{'error': result['error']}]
+            confidence = None
+        else:
+            evidence = [r.get('evidence') for r in result.get('affected_nodes', [])]
+            confidence = 1.0
     elif query_tool == 'explain_module':
         if not query_arg or len(query_arg) < 1:
             print("Error: --query-arg <path> required for explain_module")
             return
         result = navigator.explain_module(query_arg[0])
-        evidence = [result.get('evidence')]
-        confidence = result.get('evidence', {}).get('confidence', 1.0)
+        if 'error' in result:
+            evidence = [{'error': result['error']}]
+            confidence = None
+        else:
+            evidence = [result.get('evidence')]
+            confidence = result.get('evidence', {}).get('confidence', 1.0)
     else:
         print(f"Unknown query tool: {query_tool}")
         return

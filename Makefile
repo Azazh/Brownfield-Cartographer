@@ -1,8 +1,10 @@
 
+
+
 # Run full pipeline: clone and analyze (generates CODEBASE.md)
 pipeline:
 	@echo "[Pipeline] Running full analysis..."
-	. .venv/bin/activate && python -m src.cli --repo $(REPO) --output .cartography --mode analyze
+	. .venv/bin/activate && python -m src.cli --repo $(REPO) --output $(OUTPUT)
 
 # To run semantic indexing after CODEBASE.md is generated, run:
 # make semantic-index
@@ -16,6 +18,8 @@ semantic-index:
 PYTHON = .venv/bin/python
 
 .PHONY: run test
+
+
 
 run:
 	.venv/bin/python -m src.cli --repo $(REPO) --output $(OUTPUT)
