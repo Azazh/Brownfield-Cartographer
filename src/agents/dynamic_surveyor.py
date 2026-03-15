@@ -73,8 +73,21 @@ class DynamicSurveyor:
                                 )
                                 self.kg.add_edge(edge)
                         elif lang == 'sql':
+                            # Treat SQL files as modules for analysis
+                            module_node = ModuleNode(
+                                path=file_path,
+                                language='sql',
+                                imports=[],
+                                public_functions=result.get('tables', []),
+                                classes=[],
+                                class_inheritance={},
+                                change_velocity_30d=0,
+                                is_dead_code_candidate=False
+                            )
+                            self.kg.add_node(module_node)
+                            # Also add DatasetNodes for lineage
                             from src.models.node_types import DatasetNode
-                            for table in result['tables']:
+                            for table in result.get('tables', []):
                                 ds_node = DatasetNode(name=table, storage_type='table')
                                 self.kg.add_node(ds_node)
                         elif lang == 'yaml':
@@ -223,6 +236,7 @@ class DynamicSurveyor:
                     logger.info(f"[Surveyor] Processed {processed}/{total_files} files...")
                 try:
                     if lang in ('python', 'sql', 'yaml'):
+                        logger.info(f"[Surveyor] Found {lang} file: {file_path}")
                         try:
                             with open(file_path, 'r', encoding='utf-8') as f:
                                 code = f.read()
@@ -231,8 +245,10 @@ class DynamicSurveyor:
                             continue
                         result = TS_ANALYZER.analyze(code, lang)
                         if not result:
+                            logger.info(f"[Surveyor] Analyzer returned no result for {file_path}")
                             continue
                         if lang == 'python':
+                            logger.info(f"[Surveyor] Processing Python file: {file_path}")
                             file_paths.append(file_path)
                             module_node = ModuleNode(
                                 path=file_path,
