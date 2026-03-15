@@ -1,5 +1,3 @@
-
-
 import os
 import requests
 import json
@@ -43,9 +41,10 @@ class ContextWindowBudget:
         return {'cumulative_tokens': self.cumulative_tokens, 'calls': self.token_log}
 
 class LLMClient:
-    def call_openrouter(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512, messages: Optional[list] = None, reasoning: bool = False) -> str:
+    def call_openrouter(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512, messages: Optional[list] = None, reasoning: bool = False) -> dict:
         """
-        Call OpenRouter API using requests. Uses .env for API key and model. Returns string content for agent compatibility.
+        Call OpenRouter API using requests. Uses .env for API key and model.
+        Always returns the full parsed JSON response (not just content), like call_groq.
         """
         api_key = os.environ.get("OPENROUTER_API_KEY")
         url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
@@ -69,19 +68,15 @@ class LLMClient:
             print(f"[LLM DEBUG] OpenRouter response body: {resp.text[:500]}")
             resp.raise_for_status()
             result = resp.json()
-            if "choices" in result and result["choices"]:
-                message = result["choices"][0]["message"]
-                content = message.get("content")
-                if content is not None:
-                    return content
-                print(f"[LLM DEBUG] OpenRouter missing content: {result}")
-                return "[OpenRouter error: No content in response]"
-            return f"[OpenRouter error: No choices in response]"
+            return result
         except Exception as e:
             print(f"[LLM DEBUG] OpenRouter failed: {e}")
-            return f"[OpenRouter error: {e}]"
+            return {"error": f"[OpenRouter error: {e}]"}
 
-    def call_groq(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512) -> str:
+    def call_groq(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512) -> dict:
+        """
+        Calls Groq API and returns the full parsed JSON response (not just content).
+        """
         api_key = os.environ.get("GROQ_API_KEY")
         base_url = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
         model_name = model or os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
@@ -100,12 +95,10 @@ class LLMClient:
             print(f"[LLM DEBUG] Groq response body: {resp.text[:500]}")
             resp.raise_for_status()
             data = resp.json()
-            if "choices" in data and data["choices"]:
-                return data["choices"][0]["message"]["content"]
-            return f"[Groq error: No choices in response]"
+            return data
         except Exception as e:
             print(f"[LLM DEBUG] Groq failed: {e}")
-            return f"[Groq error: {e}]"
+            return {"error": f"[Groq error: {e}]"}
     def __init__(self, ollama_url: Optional[str] = None, gemini_api_key: Optional[str] = None):
         self.ollama_url = ollama_url or os.environ.get("OLLAMA_URL", "http://localhost:11434")
         self.gemini_api_key = gemini_api_key or os.environ.get("GEMINI_API_KEY", "AIzaSyC5t_zEJJ3C_dY5V9Od2Z9Hholg84yZKiE")
@@ -209,3 +202,71 @@ class LLMClient:
         prompt += f"\nCode:\n{code}\n"
         prompt += "\nPurpose Statement:"
         return prompt
+    def generate_day_one_answers(self, prompt: str, evidence: dict = None, max_tokens: int = 1024) -> dict:
+        """
+        Calls Groq, extracts and parses the LLM content, and returns a dict with q1-q5 and evidence.
+        Ensures onboarding_brief.md is always populated with valid answers or clear error messages.
+        """
+        import logging
+        import re
+        logger = logging.getLogger("llm_debug")
+        errors = []
+        try:
+            groq_api = self.call_groq(prompt, max_tokens=max_tokens)
+            logger.warning(f"[LLM DEBUG] Raw Groq API response: {groq_api}")
+            if isinstance(groq_api, dict) and "choices" in groq_api and groq_api["choices"]:
+                content = groq_api["choices"][0]["message"]["content"]
+                cleaned = content.strip()
+                # Remove triple backtick code block (```json ... ``` or ``` ... ```), allowing for leading whitespace/newlines
+                codeblock_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned, re.IGNORECASE)
+                if codeblock_match:
+                    cleaned = codeblock_match.group(1).strip()
+                # Fallback: extract first {...} block if code block not found
+                if not codeblock_match:
+                    brace_start = cleaned.find('{')
+                    brace_end = cleaned.rfind('}')
+                    if brace_start != -1 and brace_end != -1 and brace_end > brace_start:
+                        cleaned = cleaned[brace_start:brace_end+1]
+                try:
+                    parsed = json.loads(cleaned)
+                except Exception as e:
+                    logger.error(f"[LLM DEBUG] Groq content not valid JSON: {e}")
+                    # Fallback: extract q1-q5 answers using regex
+                    import re
+                    fallback = {}
+                    for k in ['q1', 'q2', 'q3', 'q4', 'q5']:
+                        # Match: "q1": "..." (allow multiline)
+                        m = re.search(r'"%s"\s*:\s*"([^"]*)"' % k, cleaned, re.DOTALL)
+                        if m:
+                            fallback[k] = m.group(1).replace('\\n', '\n').strip()
+                        else:
+                            fallback[k] = 'No answer available (Groq parse fallback).'
+                    if evidence and 'evidence' not in fallback:
+                        fallback['evidence'] = evidence
+                    fallback['raw_response'] = cleaned
+                    return fallback
+                for k in ['q1', 'q2', 'q3', 'q4', 'q5']:
+                    if k not in parsed:
+                        parsed[k] = 'No answer available.'
+                if evidence and 'evidence' not in parsed:
+                    parsed['evidence'] = evidence
+                parsed['raw_response'] = cleaned
+                return parsed
+            elif isinstance(groq_api, dict) and "error" in groq_api:
+                logger.error(f"[LLM DEBUG] Groq API error: {groq_api['error']}")
+                errors.append(groq_api["error"])
+            else:
+                logger.error(f"[LLM DEBUG] Unexpected Groq API response: {groq_api}")
+                errors.append(str(groq_api))
+        except Exception as e:
+            logger.error(f"[LLM DEBUG] Exception in generate_day_one_answers: {e}")
+            errors.append(f"Groq: {e}")
+        return {
+            'q1': 'No answer available (Groq error).',
+            'q2': 'No answer available (Groq error).',
+            'q3': 'No answer available (Groq error).',
+            'q4': 'No answer available (Groq error).',
+            'q5': 'No answer available (Groq error).',
+            'evidence': evidence or {},
+            'raw_response': '; '.join(errors)
+        }
