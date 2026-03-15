@@ -156,7 +156,9 @@ class SemanticistAgent:
                 if hasattr(node_model, 'path') and node_model.path in files_to_process:
                     code = self._read_file(node_model.path)
                     docstring = self._extract_docstring(code)
-                    purpose = self._generate_purpose_statement(code, docstring)
+                    file = getattr(node_model, 'path', '')
+                    line_range = getattr(node_model, 'line_range', '')
+                    purpose = self._generate_purpose_statement(code, docstring, file=file, line_range=line_range)
                     node_model.purpose_statement = purpose
                     if docstring and not self._docstring_matches_purpose(docstring, purpose):
                         node_model.documentation_drift = True
@@ -192,8 +194,9 @@ class SemanticistAgent:
             if isinstance(node_model, ModuleNode) and getattr(node_model, 'path', None) and node_model.path in important_paths:
                 code = self._read_file(node_model.path)
                 docstring = self._extract_docstring(code)
-                # Generate purpose statement using LLM
-                purpose = self._generate_purpose_statement(code, docstring)
+                file = getattr(node_model, 'path', '')
+                line_range = getattr(node_model, 'line_range', '')
+                purpose = self._generate_purpose_statement(code, docstring, file=file, line_range=line_range)
                 node_model.purpose_statement = purpose
                 # Optionally, flag documentation drift
                 if docstring and not self._docstring_matches_purpose(docstring, purpose):
@@ -229,12 +232,16 @@ class SemanticistAgent:
             return match.group(1) or match.group(2) or ""
         return ""
 
-    def _generate_purpose_statement(self, code: str, docstring: str) -> str:
+    def _generate_purpose_statement(self, code: str, docstring: str, file: str = '', line_range: str = '') -> str:
         # Use the LLMClient for purpose statement generation, robust fallback: try each model only once
+        from src.llm import ContextWindowBudget
+        budget = ContextWindowBudget()
         if self.llm_client:
             try:
-                result = self.llm_client.generate_purpose_statement(code, docstring, prefer_fast=True)
-                # If result is a known error, do not retry the same model, just try others (handled in LLMClient)
+                result = self.llm_client.generate_purpose_statement(code, docstring, prefer_fast=True, file=file, line_range=line_range)
+                # Log token/model usage
+                tokens = budget.estimate_tokens(code)
+                logger.info(f"[LLM Budget] Purpose statement: {tokens} tokens for {file}:{line_range}")
                 return result
             except Exception as e:
                 logger.warning(f"LLM call failed: {e}")
